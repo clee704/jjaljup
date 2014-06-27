@@ -84,7 +84,7 @@ Session = sessionmaker()
 Session.configure(bind=engine)
 Base.metadata.create_all(engine)
 
-session = Session()  # Use this only in main thread
+session = Session()  # Use this in main thread only
 
 
 @click.group()
@@ -92,13 +92,15 @@ def cli():
     pass
 
 
-@cli.command(help='Add a new Twitter account.')
+@cli.command()
 def add():
+    """Add a new Twitter account."""
     add_user()
 
 
-@cli.command(help='Show a list of saved accounts.')
+@cli.command()
 def accounts():
+    """Show a list of saved accounts."""
     users = list_users()
     if not users:
         print('No accounts.')
