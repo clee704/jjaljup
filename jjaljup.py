@@ -22,6 +22,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import backref, relationship, sessionmaker
 from termcolor import colored
+from twitter import Status as StatusBase
 
 logging.basicConfig()
 
@@ -332,29 +333,33 @@ def raise_unexpected_error(err):
 
 
 def save_tweet(directory, tweets, num_images):
-    sess = Session()
+    session = Session()
     while True:
         try:
             tweet_data = tweets.get_nowait()
         except Queue.Empty:
             break
-        tweet = sess.query(Tweet).get(tweet_data.id)
+        tweet = session.query(Tweet).get(tweet_data.id)
         if tweet is None:
             tweet = Tweet(id=tweet_data.id)
-            sess.add(tweet)
-            image_urls = []
-            for media in tweet_data.media:
-                if media['type'] == 'photo':
-                    image_urls.append(media['media_url'])
-            for url_data in tweet_data.urls:
-                if is_image_url(url_data.expanded_url):
-                    image_urls.append(url_data.expanded_url)
-            for url in image_urls:
-                local_path = '{0}_{1}'.format(tweet.id, os.path.basename(url))
-                o = urlparse(url)
-                if o.netloc == 'pbs.twimg.com':
-                    url = url + ':orig'
-                tweet.images.append(Image(url=url, local_path=local_path))
+            session.add(tweet)
+        old_image_urls = set([image.url for image in tweet.images])
+        new_image_urls = set()
+        for media in tweet_data.media:
+            if media['type'] == 'photo':
+                new_image_urls.add(media['media_url'])
+        for url_data in tweet_data.urls:
+            if is_image_url(url_data.expanded_url):
+                new_image_urls.add(url_data.expanded_url)
+        for image in tweet.images:
+            if image.url in old_image_urls - new_image_urls:
+                session.delete(image)
+        for url in new_image_urls - old_image_urls:
+            local_path = '{0}_{1}'.format(tweet.id, os.path.basename(url))
+            o = urlparse(url)
+            if o.netloc == 'pbs.twimg.com':
+                url = url + ':orig'
+            tweet.images.append(Image(url=url, local_path=local_path))
         for image in tweet.images:
             path = os.path.join(directory, image.local_path)
             if not os.path.exists(path):
@@ -362,7 +367,7 @@ def save_tweet(directory, tweets, num_images):
                 with open(path, 'wb') as f:
                     f.write(bytes)
         num_images.put(len(tweet.images))
-        sess.commit()
+        session.commit()
         tweets.task_done()
 
 
@@ -385,6 +390,19 @@ def is_image_url(url):
 
 def is_image(resp):
     return resp.headers.get('content-type', '').startswith('image')
+
+
+class Status(StatusBase):
+
+    @staticmethod
+    def NewFromJsonDict(data):
+        status = StatusBase.NewFromJsonDict(data)
+        if 'extended_entities' in data:
+            if 'media' in data['extended_entities']:
+                status.media = data['extended_entities']['media']
+        return status
+
+twitter.Status = Status
 
 
 if __name__ == '__main__':
