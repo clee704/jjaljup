@@ -210,13 +210,12 @@ def sync(account, directory, count, delete, workers):
             num_saved_images, num_saved_tweets, directory))
     finally:
         if tweet_ids and delete:
-            max_id = max(tweet_ids)
             min_id = min(tweet_ids)
             num_deleted_tweets = 0
             num_deleted_images = 0
             qr = session.query(Tweet).filter(~Tweet.id.in_(tweet_ids))
             if count < float('inf'):
-                qr = qr.filter((Tweet.id >= min_id) & (Tweet.id <= max_id))
+                qr = qr.filter(Tweet.id >= min_id)
             for tweet in qr:
                 num_deleted_tweets += 1
                 num_deleted_images += len(tweet.images)
