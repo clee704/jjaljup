@@ -1,7 +1,6 @@
 #! /usr/bin/env python
 from __future__ import print_function
 
-import json
 import logging
 import os
 import Queue
@@ -20,7 +19,7 @@ from requests_oauthlib import OAuth1Session
 from sqlalchemy import Column, event, ForeignKey, Integer, String
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import backref, relationship, sessionmaker
+from sqlalchemy.orm import relationship, sessionmaker
 from termcolor import colored
 from twitter import Status as StatusBase
 
@@ -135,20 +134,14 @@ def sync(account, directory, count, delete, workers):
     thus 12000 tweets per hour.
 
     """
+    CALL_SIZE = 200
     if count is None:
         count = float('inf')
-    TWEETS_PER_REQUEST = 200
     if not os.path.exists(directory):
         os.makedirs(directory)
         print(u'Created a directory at {0}'.format(directory))
     print(u'Images will be downloaded into {0}'.format(directory))
-    user = session.query(User).filter_by(screen_name=account).first()
-    if user is None:
-        if account is not None:
-            print(colored('@{0} does not exist.'.format(account), 'red'),
-                  file=sys.stderr)
-        user = select_user()
-    api = create_api(user)
+    api = create_api(select_user(account))
     num_favorites = None
     try:
         num_favorites = api.VerifyCredentials().favourites_count
@@ -157,8 +150,8 @@ def sync(account, directory, count, delete, workers):
         if err['code'] != RATE_LIMIT_EXCEEDED:
             raise_unexpected_error(err)
     if num_favorites is not None:
-        eta_min = max(1, int(min(count, num_favorites) / 200))
-        eta_max = max(10, int(min(count, num_favorites) / 100))
+        eta_min = max(1, int(min(count, num_favorites) / CALL_SIZE))
+        eta_max = max(10, int(min(count, num_favorites) / CALL_SIZE * 2))
         print('You have {0} favorite tweets.'.format(num_favorites))
         if count < float('inf'):
             print(('Only the most recent {0} tweets will be '
@@ -180,7 +173,7 @@ def sync(account, directory, count, delete, workers):
             reset = data['reset']
             try:
                 while remaining > 0 and not last:
-                    tweets = api.GetFavorites(count=TWEETS_PER_REQUEST,
+                    tweets = api.GetFavorites(count=CALL_SIZE,
                                               max_id=max_id)
                     remaining -= 1
                     input_queue = Queue.Queue()
@@ -191,10 +184,11 @@ def sync(account, directory, count, delete, workers):
                         if num_saved_tweets >= count:
                             break
                     output_queue = Queue.Queue()
-                    for i in range(workers):
-                        t = Thread(target=save_tweet,
-                                   args=(directory, input_queue, output_queue))
-                        t.start()
+                    for _ in range(workers):
+                        Thread(
+                            target=save_tweet,
+                            args=(directory, input_queue, output_queue)
+                        ).start()
                     input_queue.join()
                     while not output_queue.empty():
                         num_saved_images += output_queue.get_nowait()
@@ -236,7 +230,13 @@ def list_users():
     return session.query(User).order_by(User.id).all()
 
 
-def select_user():
+def select_user(screen_name=None):
+    user = session.query(User).filter_by(screen_name=screen_name).first()
+    if user is not None:
+        return user
+    if screen_name is not None:
+        print(colored('@{0} does not exist.'.format(screen_name), 'red'),
+              file=sys.stderr)
     users = list_users()
     if users:
         n = len(users) + 1
@@ -343,37 +343,30 @@ def save_tweet(directory, tweets, num_images):
         if tweet is None:
             tweet = Tweet(id=tweet_data.id)
             session.add(tweet)
-        old_image_urls = set([image.url for image in tweet.images])
-        new_image_urls = set()
-        for media in tweet_data.media:
-            if media['type'] == 'photo':
-                new_image_urls.add(media['media_url'])
-        for url_data in tweet_data.urls:
-            if is_image_url(url_data.expanded_url):
-                new_image_urls.add(url_data.expanded_url)
-        for image in tweet.images:
-            if image.url in old_image_urls - new_image_urls:
-                session.delete(image)
+        old_image_urls = set([img.url for img in tweet.images])
+        new_image_urls = extract_image_urls(tweet_data)
+        tweet.images[:] = (img for img in tweet.images
+                           if img.url not in old_image_urls - new_image_urls)
         for url in new_image_urls - old_image_urls:
             local_path = '{0}_{1}'.format(tweet.id, os.path.basename(url))
             o = urlparse(url)
             if o.netloc == 'pbs.twimg.com':
                 url = url + ':orig'
             tweet.images.append(Image(url=url, local_path=local_path))
-        for image in tweet.images:
-            path = os.path.join(directory, image.local_path)
+        for img in tweet.images:
+            path = os.path.join(directory, img.local_path)
             if not os.path.exists(path):
-                bytes = requests.get(image.url).content
+                image_data = requests.get(img.url).content
                 with open(path, 'wb') as f:
-                    f.write(bytes)
+                    f.write(image_data)
         num_images.put(len(tweet.images))
         session.commit()
         tweets.task_done()
 
 
 def delete_tweet(tweet, directory):
-    for image in tweet.images:
-        path = os.path.join(directory, image.local_path)
+    for img in tweet.images:
+        path = os.path.join(directory, img.local_path)
         if os.path.exists(path):
             try:
                 os.unlink(path)
@@ -392,6 +385,18 @@ def is_image(resp):
     return resp.headers.get('content-type', '').startswith('image')
 
 
+def extract_image_urls(tweet_data):
+    image_urls = set()
+    for media in tweet_data.media:
+        if media['type'] == 'photo':
+            image_urls.add(media['media_url'])
+    for url_data in tweet_data.urls:
+        if is_image_url(url_data.expanded_url):
+            image_urls.add(url_data.expanded_url)
+    return image_urls
+
+
+# Hack until https://github.com/bear/python-twitter/issues/160 is resolved
 class Status(StatusBase):
 
     @staticmethod
