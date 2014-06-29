@@ -28,7 +28,6 @@ setup(
         'requests==2.3.0',
         'requests-oauthlib==0.4.1',
         'sqlalchemy==0.9.6',
-        'termcolor==1.1.0',
         'click==2.2',
     ],
     entry_points={

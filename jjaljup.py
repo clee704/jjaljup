@@ -12,6 +12,7 @@ from threading import Thread
 from urlparse import urlparse
 
 import click
+from click import secho
 import requests
 import sqlalchemy
 import twitter
@@ -20,7 +21,6 @@ from sqlalchemy import Column, event, ForeignKey, Integer, String
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
-from termcolor import colored
 from twitter import Status as StatusBase
 
 logging.basicConfig()
@@ -105,9 +105,9 @@ def accounts():
     if not users:
         print('No accounts.')
     else:
-        print('Number of accounts: {0}'.format(len(users)))
+        print('Accounts: {0}'.format(len(users)))
         for i, user in enumerate(users, 1):
-            print(u' {0}. {1} @{2}'.format(i, user.name, user.screen_name))
+            print(u' {0}. {1} (@{2})'.format(i, user.name, user.screen_name))
 
 
 @cli.command()
@@ -139,8 +139,8 @@ def sync(account, directory, count, delete, workers):
         count = float('inf')
     if not os.path.exists(directory):
         os.makedirs(directory)
-        print(u'Created a directory at {0}'.format(directory))
-    print(u'Images will be downloaded into {0}'.format(directory))
+        secho(b'Created a directory at {0}'.format(directory))
+    secho(b'Images will be downloaded into {0}'.format(directory))
     api = create_api(select_user(account))
     num_favorites = None
     try:
@@ -154,8 +154,8 @@ def sync(account, directory, count, delete, workers):
         eta_max = max(10, int(min(count, num_favorites) / CALL_SIZE * 2))
         print('You have {0} favorite tweets.'.format(num_favorites))
         if count < float('inf'):
-            print(('Only the most recent {0} tweets will be '
-                   'examined.').format(count))
+            print('Only the most recent {0} tweets will be examined.'.format(
+                count))
         print('It may take {0}-{1} minutes to complete.'.format(eta_min,
                                                                 eta_max))
     max_id = None
@@ -206,7 +206,7 @@ def sync(account, directory, count, delete, workers):
                 print(('Rate limit exceeded. '
                        'Waiting for the next round at {0}.').format(reset_dt))
                 time.sleep(max(1, reset - time.time() + 10))
-        print('Synchronized {0} images in {1} tweets into {2}'.format(
+        secho(b'Synchronized {0} images in {1} tweets into {2}'.format(
             num_saved_images, num_saved_tweets, directory))
     finally:
         if tweet_ids and delete:
@@ -234,24 +234,17 @@ def select_user(screen_name=None):
     if user is not None:
         return user
     if screen_name is not None:
-        print(colored('@{0} does not exist.'.format(screen_name), 'red'),
+        secho('@{0} does not exist.'.format(screen_name), fg='red',
               file=sys.stderr)
     users = list_users()
     if users:
         n = len(users) + 1
-        print(colored('Choose a Twitter account to work with:', 'blue'))
+        secho('Choose a Twitter account to work with:', fg='blue')
         for i, user in enumerate(users, 1):
             print(u' {0}. {1} (@{2})'.format(i, user.name, user.screen_name))
         print(' {0}. Add a new account'.format(n))
-        while True:
-            try:
-                prompt = colored('Choice: ', 'blue')
-                choice = int(raw_input(prompt))
-                if 1 <= choice <= n:
-                    break
-            except ValueError:
-                pass
-            print('Please enter a number between 1 and {0}.'.format(n))
+        choice = click.prompt(click.style('Choice: ', fg='blue'),
+                              type=click.IntRange(1, n), prompt_suffix='')
         user = add_user() if choice == n else users[choice - 1]
     else:
         user = add_user()
@@ -296,11 +289,11 @@ def get_token_credentials():
     oauth_token_secret = temporary_credentials.get('oauth_token_secret')
 
     authorization_url = oauth.authorization_url(AUTHORIZATION_URL)
-    print(colored('Copy and paste the following URL into your web browser and '
-                  'authorize the app:', 'blue'))
+    secho('Copy and paste the following URL into your web browser and '
+          'authorize the app:', fg='blue')
     print(authorization_url)
     webbrowser.open(authorization_url)
-    verifier = raw_input(colored('Enter the PIN: ', 'blue'))
+    verifier = click.prompt(click.style('Enter the PIN', fg='blue'))
 
     oauth = OAuth1Session(CLIENT_KEY, client_secret=CLIENT_SECRET,
                           resource_owner_key=oauth_token,
@@ -319,8 +312,8 @@ def get_rate_limit_status(api, resources):
         except twitter.TwitterError as e:
             err = e.args[0][0]
             if err['code'] == RATE_LIMIT_EXCEEDED:
-                print(colored('Rate limit exceeded. Waiting for 3 minutes '
-                              'before trying again.', 'red'), file=sys.stderr)
+                secho('Rate limit exceeded. Waiting for 3 minutes before '
+                      'trying again.', fg='red', file=sys.stderr)
             else:
                 raise_unexpected_error(err)
         time.sleep(180)
@@ -370,8 +363,8 @@ def delete_tweet(tweet, directory):
             try:
                 os.unlink(path)
             except OSError as e:
-                print(colored(u'Failed to delete the image at {0}: {1}'.format(
-                    path, e.strerror)))
+                secho(u'Failed to delete the image at {0}: {1}'.format(
+                    path, e.strerror), fg='red')
     session.delete(tweet)
     session.commit()
 
