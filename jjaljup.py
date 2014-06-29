@@ -10,6 +10,7 @@ import sys
 import time
 import webbrowser
 from datetime import datetime
+from distutils.version import StrictVersion
 from threading import Thread
 from urlparse import urlparse
 
@@ -24,6 +25,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
 from twitter import Status as StatusBase
+
+__version__ = '0.0.2'
 
 logger = logging.getLogger(__name__)
 
@@ -498,5 +501,22 @@ class Status(StatusBase):
 twitter.Status = Status
 
 
+def main():
+    try:
+        cli()
+    except sqlalchemy.exc.OperationalError:
+        logger.debug('sqlalchemy.exc.OperationalError', exc_info=True)
+        if StrictVersion(__version__) < StrictVersion('0.1'):
+            secho(('Your jjaljup database is outdated. '
+                   'Unfortunately, migrating data to a new database '
+                   'will not be supported until jjaljup reaches version 0.1. '
+                   'You are using version {0}. '
+                   'Please create a new database.').format(
+                __version__), fg='red', file=sys.stderr)
+        else:
+            # TODO instruct how to migrate
+            pass
+
+
 if __name__ == '__main__':
-    cli()
+    main()

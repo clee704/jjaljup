@@ -33,7 +33,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'jjaljup=jjaljup:cli',
+            'jjaljup=jjaljup:main',
         ],
     },
     keywords='crawler twitter downloader',
