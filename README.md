@@ -31,11 +31,11 @@ Azyu님의 [FavoImgs](https://github.com/azyu/FavoImgs/)를 보고 리눅스나 
 [Twitter Application Management](https://apps.twitter.com/)에 가서
 "Create New App" 버튼을 눌러 새로운 앱을 만드세요. 이름, 설명, 웹사이트 주소는 아무렇게나 해도
 됩니다. 앱을 만든 뒤 "API Keys" 탭으로 가면 API key와 API secret이 있습니다. 커맨드가 실행될
-때 이 두 값이 각각 `JJALJUP_CLIENT_KEY`와 `JJALJUP_CLIENT_SECRET` 환경 변수에 들어가
+때 이 두 값이 각각 `JJALJUP_API_KEY`와 `JJALJUP_API_SECRET` 환경 변수에 들어가
 있어야 합니다. 아래는 예를 든 것으로 여러분들의 실제 값과는 다릅니다.
 
-    $ export JJALJUP_CLIENT_KEY=bOJZcMNBCdfIZfw70DAd4BCBP
-    $ export JJALJUP_CLIENT_SECRET=YvMMkcKo9vFhlX02wd9TKuPAdiPNAs7eDlFZmkV2e2SeXSo7qc
+    $ export JJALJUP_API_KEY=bOJZcMNBCdfIZfw70DAd4BCBP
+    $ export JJALJUP_API_SECRET=YvMMkcKo9vFhlX02wd9TKuPAdiPNAs7eDlFZmkV2e2SeXSo7qc
     $ jjaljup sync
 
 `JJALJUP_DATABASE_URI` 환경 변수를 설정하면 데이터베이스를 지정할 수 있습니다. 기본값은

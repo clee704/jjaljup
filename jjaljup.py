@@ -121,13 +121,14 @@ def client_credentials_option(f):
         state.client_secret = value
         return state
 
-    key_option = click.option('--client-key', metavar='KEY',
-                              envvar='JJALJUP_CLIENT_KEY', prompt=True,
+    key_option = click.option('--api-key', metavar='KEY',
+                              envvar='JJALJUP_API_KEY', prompt='API key',
                               expose_value=False, callback=key_callback,
                               help='API key of your Twitter app.')
-    secret_option = click.option('--client-secret', metavar='SECRET',
-                                 envvar='JJALJUP_CLIENT_SECRET', prompt=True,
-                                 expose_value=False, callback=secret_callback,
+    secret_option = click.option('--api-secret', metavar='SECRET',
+                                 envvar='JJALJUP_API_SECRET',
+                                 prompt='API secret', expose_value=False,
+                                 callback=secret_callback,
                                  help='API secret of your Twitter app.')
     return key_option(secret_option(f))
 
@@ -152,6 +153,14 @@ def session_option(f):
 @click.group()
 @click.option('--debug', is_flag=True, default=False, help='Show debug logs.')
 def cli(debug):
+    """
+    jjaljup is a downloader for images in your favorite tweets. To use this
+    script, you must create your own Twitter app at apps.twitter.com. Specify
+    your app's API key and secret when using jjaljup commands, or have
+    environment variables named JJALJUP_API_KEY and JJALJUP_API_SECRET to set
+    them automatically.
+
+    """
     logging.basicConfig(level=logging.DEBUG if debug else logging.WARN)
 
 
