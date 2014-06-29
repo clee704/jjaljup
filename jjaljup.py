@@ -114,8 +114,8 @@ def accounts():
 @click.option('-a', '--account', metavar='SCREEN_NAME',
               help='Select a Twitter account to sync.')
 @click.option('-d', '--directory', metavar='PATH', default='images',
-              type=click.Path(file_okay=False, writable=True,
-                              resolve_path=True),
+              prompt=True, type=click.Path(file_okay=False, writable=True,
+                                           resolve_path=True),
               help='Select a local directory to sync. If it does not exist, '
                    'new directories will be created as necessary.')
 @click.option('--count', metavar='N', type=int,
