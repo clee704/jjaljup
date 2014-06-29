@@ -6,11 +6,13 @@ import logging
 import os
 import pprint
 import Queue
+import re
 import sys
 import time
 import webbrowser
 from datetime import datetime
 from distutils.version import StrictVersion
+from HTMLParser import HTMLParser, HTMLParseError
 from threading import Thread
 from urlparse import urlparse
 
@@ -466,7 +468,7 @@ def save_tweet(directory, user_id, tweets_queue, num_images_queue):
             for url in new_image_urls - old_image_urls:
                 local_path = '{0}_{1}'.format(tweet.id, os.path.basename(url))
                 o = urlparse(url)
-                if o.netloc == 'pbs.twimg.com':
+                if o.netloc == 'pbs.twimg.com' and 'tweet_video' not in url:
                     url = url + ':orig'
                 tweet.images.append(Image(url=url, local_path=local_path))
             num_images = 0
@@ -528,9 +530,48 @@ def extract_image_urls(tweet_data):
         if media['type'] == 'photo':
             image_urls.add(media['media_url'])
     for url_data in tweet_data.urls:
-        if is_image_url(url_data.expanded_url):
-            image_urls.add(url_data.expanded_url)
+        url = url_data.expanded_url
+        if is_image_url(url):
+            image_urls.add(url)
+        elif re.match(r'https?://twitter.com/.*/photo/\d+', url):
+            mp4_url = extract_twitter_agif(url)
+            if mp4_url is not None:
+                image_urls.add(mp4_url)
     return image_urls
+
+
+def extract_twitter_agif(url):
+    resp = requests.get(url)
+    if resp.status_code == 404:
+        return
+    parser = TwitterAnimatedGifExtracter()
+    try:
+        parser.feed(resp.text)
+    except HTMLParseError:
+        return
+    return parser.url
+
+
+class TwitterAnimatedGifExtracter(HTMLParser):
+
+    def __init__(self):
+        HTMLParser.__init__(self)
+        self.found_video_tag = False
+        self.url = None
+
+    def handle_starttag(self, tag, attrs_list):
+        attrs = dict(attrs_list)
+        classes = attrs.get('class', '').split()
+        if not self.found_video_tag:
+            if tag == 'video' and 'animated-gif' in classes:
+                self.found_video_tag = True
+        else:
+            if tag == 'source' and attrs.get('type') == 'video/mp4':
+                self.url = attrs['video-src']
+
+    def handle_endtag(self, tag):
+        if tag == 'video' and self.found_video_tag:
+            self.found_video_tag = False
 
 
 # Hack until https://github.com/bear/python-twitter/issues/160 is resolved
