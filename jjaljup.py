@@ -358,7 +358,7 @@ def select_user(session, client_key, client_secret, screen_name=None):
     if user is not None:
         return user
     if screen_name is not None:
-        secho('@{0} does not exist.'.format(screen_name), fg='red',
+        secho(u'@{0} does not exist.'.format(screen_name), fg='red',
               file=sys.stderr)
     users = list_users(session)
     user = None
@@ -443,11 +443,11 @@ def raise_unexpected_error(err):
                         u'(code: {code})').format(**err))
 
 
-def save_tweet(directory, user_id, tweets, num_images):
+def save_tweet(directory, user_id, tweets_queue, num_images_queue):
     session = Session()
     while True:
         try:
-            tweet_data = tweets.get_nowait()
+            tweet_data = tweets_queue.get_nowait()
         except Queue.Empty:
             break
         try:
@@ -469,14 +469,27 @@ def save_tweet(directory, user_id, tweets, num_images):
                 if o.netloc == 'pbs.twimg.com':
                     url = url + ':orig'
                 tweet.images.append(Image(url=url, local_path=local_path))
+            num_images = 0
             for img in tweet.images:
                 path = os.path.join(directory,
                                     img.local_path.encode(PATH_ENCODING))
-                if not os.path.exists(path):
-                    image_data = requests.get(img.url).content
-                    with open(path, 'wb') as f:
-                        f.write(image_data)
-            num_images.put(len(tweet.images))
+                if os.path.exists(path):
+                    num_images += 1
+                else:
+                    resp = requests.get(img.url)
+                    if resp.status_code != 200:
+                        secho(u'Got status code {0} from {1}'.format(
+                            resp.status_code, img.url))
+                        continue
+                    image_data = resp.content
+                    try:
+                        with open(path, 'wb') as f:
+                            f.write(image_data)
+                        num_images += 1
+                    except IOError as e:
+                        secho(u'Failed to save the image to {0}: {1}'.format(
+                            path, e.strerror), fg='red', file=sys.stderr)
+            num_images_queue.put(num_images)
             session.commit()
         except Exception:
             logger.exception('Unexpected error occurred while saving a tweet.')
@@ -484,7 +497,7 @@ def save_tweet(directory, user_id, tweets, num_images):
                          pprint.pformat(tweet_data.AsDict()))
             session.rollback()
         finally:
-            tweets.task_done()
+            tweets_queue.task_done()
 
 
 def delete_tweet(session, directory, user, tweet):
@@ -495,7 +508,7 @@ def delete_tweet(session, directory, user, tweet):
                 os.unlink(path)
             except OSError as e:
                 secho(u'Failed to delete the image at {0}: {1}'.format(
-                    path, e.strerror), fg='red')
+                    path, e.strerror), fg='red', file=sys.stderr)
     user.favorites.remove(tweet)
     if tweet.favorited_users.count() == 0:
         session.delete(tweet)
