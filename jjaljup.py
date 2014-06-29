@@ -30,7 +30,7 @@ from twitter import Api as ApiBase
 from twitter import Status as StatusBase
 from twitter import TwitterError
 
-__version__ = '0.0.2'
+__version__ = '0.0.3'
 
 logger = logging.getLogger(__name__)
 
