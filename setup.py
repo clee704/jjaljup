@@ -29,6 +29,7 @@ setup(
         'requests-oauthlib==0.4.1',
         'sqlalchemy==0.9.6',
         'click==2.2',
+        'colorama==0.3.1',
     ],
     entry_points={
         'console_scripts': [
