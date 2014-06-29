@@ -3,6 +3,7 @@ from __future__ import print_function
 
 import logging
 import os
+import pprint
 import Queue
 import sys
 import time
@@ -12,10 +13,10 @@ from threading import Thread
 from urlparse import urlparse
 
 import click
-from click import secho
 import requests
 import sqlalchemy
 import twitter
+from click import secho
 from requests_oauthlib import OAuth1Session
 from sqlalchemy import Column, event, ForeignKey, Integer, String
 from sqlalchemy.engine import Engine
@@ -23,11 +24,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
 from twitter import Status as StatusBase
 
-logging.basicConfig()
-
-CLIENT_KEY = os.environ.get('JJALJUP_CLIENT_KEY')
-CLIENT_SECRET = os.environ.get('JJALJUP_CLIENT_SECRET')
-DATABASE_URI = os.environ.get('JJALJUP_DATABASE_URI', 'sqlite:///jjaljup.db')
+logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = frozenset(['jpg', 'jpeg', 'gif', 'png'])
 
@@ -37,16 +34,13 @@ ACCESS_TOKEN_URL = 'https://api.twitter.com/oauth/access_token'
 RATE_LIMIT_EXCEEDED = 88
 
 
-@event.listens_for(Engine, 'connect')
-def set_sqlite_pragma(dbapi_connection, connection_record):
-    cursor = dbapi_connection.cursor()
-    cursor.execute('PRAGMA foreign_keys=ON')
-    cursor.close()
-
-
 Base = declarative_base()
+Session = sessionmaker()
 
 
+# TODO store the database securely, preferably using native features of
+# different operating systems.
+# See win32crypt.CryptProtectData
 class User(Base):
     __tablename__ = 'user'
 
@@ -75,33 +69,85 @@ class Image(Base):
     local_path = Column(String, nullable=False)
 
 
-# TODO store the database securely, preferably using native features of
-# different operating systems.
-# See win32crypt.CryptProtectData
-engine = sqlalchemy.create_engine(DATABASE_URI)
+@event.listens_for(Engine, 'connect')
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute('PRAGMA foreign_keys=ON')
+    cursor.close()
 
-Session = sessionmaker()
-Session.configure(bind=engine)
-Base.metadata.create_all(engine)
 
-session = Session()  # Use this in main thread only
+class State(object):
+
+    def __init__(self):
+        self.client_key = None
+        self.client_secret = None
+        self.session = None
+
+
+pass_state = click.make_pass_decorator(State, ensure=True)
+
+
+def client_credentials_option(f):
+
+    def key_callback(ctx, param, value):
+        state = ctx.ensure_object(State)
+        state.client_key = value
+        return state
+
+    def secret_callback(ctx, param, value):
+        state = ctx.ensure_object(State)
+        state.client_secret = value
+        return state
+
+    key_option = click.option('--client-key', metavar='KEY',
+                              envvar='JJALJUP_CLIENT_KEY', prompt=True,
+                              expose_value=False, callback=key_callback,
+                              help='API key of your Twitter app.')
+    secret_option = click.option('--client-secret', metavar='SECRET',
+                                 envvar='JJALJUP_CLIENT_SECRET', prompt=True,
+                                 expose_value=False, callback=secret_callback,
+                                 help='API secret of your Twitter app.')
+    return key_option(secret_option(f))
+
+
+def session_option(f):
+    def callback(ctx, param, value):
+        engine = sqlalchemy.create_engine(value)
+        Session.configure(bind=engine)
+        Base.metadata.create_all(engine)
+        state = ctx.ensure_object(State)
+        state.session = Session()
+        return state
+    return click.option('--database-uri', metavar='URI',
+                        envvar='JJALJUP_DATABASE_URI',
+                        default='sqlite:///jjaljup.db', expose_value=False,
+                        callback=callback,
+                        help='Specify a database that contains information '
+                             'about authorized Twitter accounts and favorite '
+                             'tweets (defaults to sqlite:///jjaljup.db).')(f)
 
 
 @click.group()
-def cli():
-    pass
+@click.option('--debug', is_flag=True, default=False, help='Show debug logs.')
+def cli(debug):
+    logging.basicConfig(level=logging.DEBUG if debug else logging.WARN)
 
 
 @cli.command()
-def add():
+@session_option
+@client_credentials_option
+@pass_state
+def add(state):
     """Add a new Twitter account."""
-    add_user()
+    add_user(state.session, state.client_key, state.client_secret)
 
 
 @cli.command()
-def accounts():
+@session_option
+@pass_state
+def accounts(state):
     """Show authorized accounts in the database."""
-    users = list_users()
+    users = list_users(state.session)
     if not users:
         print('No accounts.')
     else:
@@ -126,7 +172,10 @@ def accounts():
                    'Disabled by default.')
 @click.option('--workers', metavar='N', type=int, default=8,
               help='Number of threads to run concurrently (defaults to 8).')
-def sync(account, directory, count, delete, workers):
+@session_option
+@client_credentials_option
+@pass_state
+def sync(state, account, directory, count, delete, workers):
     """
     Synchronize images in the selected account's favorite tweets into the
     specified directory. Due to the limit on the Twitter API, at most 200
@@ -137,11 +186,19 @@ def sync(account, directory, count, delete, workers):
     CALL_SIZE = 200
     if count is None:
         count = float('inf')
+
     if not os.path.exists(directory):
         os.makedirs(directory)
         secho(b'Created a directory at {0}'.format(directory))
     secho(b'Images will be downloaded into {0}'.format(directory))
-    api = create_api(select_user(account))
+
+    user = select_user(state.session, state.client_key, state.client_secret,
+                       account)
+    api = twitter.Api(consumer_key=state.client_key,
+                      consumer_secret=state.client_secret,
+                      access_token_key=user.oauth_token,
+                      access_token_secret=user.oauth_token_secret)
+
     num_favorites = None
     try:
         num_favorites = api.VerifyCredentials().favourites_count
@@ -158,6 +215,7 @@ def sync(account, directory, count, delete, workers):
                 count))
         print('It may take {0}-{1} minutes to complete.'.format(eta_min,
                                                                 eta_max))
+
     max_id = None
     tweet_ids = set()
     last = False
@@ -213,30 +271,31 @@ def sync(account, directory, count, delete, workers):
             min_id = min(tweet_ids)
             num_deleted_tweets = 0
             num_deleted_images = 0
-            qr = session.query(Tweet).filter(~Tweet.id.in_(tweet_ids))
+            qr = state.session.query(Tweet).filter(~Tweet.id.in_(tweet_ids))
             if count < float('inf'):
                 qr = qr.filter(Tweet.id >= min_id)
             for tweet in qr:
                 num_deleted_tweets += 1
                 num_deleted_images += len(tweet.images)
-                delete_tweet(tweet, directory)
+                delete_tweet(state.session, tweet, directory)
             if num_deleted_tweets > 0:
                 print('Deleted {0} images in {1} unfavorated tweets.'.format(
                     num_deleted_images, num_deleted_tweets))
 
 
-def list_users():
+def list_users(session):
     return session.query(User).order_by(User.id).all()
 
 
-def select_user(screen_name=None):
+def select_user(session, client_key, client_secret, screen_name=None):
     user = session.query(User).filter_by(screen_name=screen_name).first()
     if user is not None:
         return user
     if screen_name is not None:
         secho('@{0} does not exist.'.format(screen_name), fg='red',
               file=sys.stderr)
-    users = list_users()
+    users = list_users(session)
+    user = None
     if users:
         n = len(users) + 1
         secho('Choose a Twitter account to work with:', fg='blue')
@@ -245,15 +304,17 @@ def select_user(screen_name=None):
         print(' {0}. Add a new account'.format(n))
         choice = click.prompt(click.style('Choice: ', fg='blue'),
                               type=click.IntRange(1, n), prompt_suffix='')
-        user = add_user() if choice == n else users[choice - 1]
-    else:
-        user = add_user()
+        if choice != n:
+            user = users[choice - 1]
+    if user is None:
+        user = add_user(session, client_key, client_secret)
     return user
 
 
-def add_user():
-    oauth_token, oauth_token_secret = get_token_credentials()
-    api = twitter.Api(consumer_key=CLIENT_KEY, consumer_secret=CLIENT_SECRET,
+def add_user(session, client_key, client_secret):
+    oauth_token, oauth_token_secret = get_token_credentials(client_key,
+                                                            client_secret)
+    api = twitter.Api(consumer_key=client_key, consumer_secret=client_secret,
                       access_token_key=oauth_token,
                       access_token_secret=oauth_token_secret)
     info = api.VerifyCredentials()
@@ -273,16 +334,8 @@ def add_user():
     return user
 
 
-def create_api(user):
-    oauth_token = user.oauth_token
-    oauth_token_secret = user.oauth_token_secret
-    return twitter.Api(consumer_key=CLIENT_KEY, consumer_secret=CLIENT_SECRET,
-                       access_token_key=oauth_token,
-                       access_token_secret=oauth_token_secret)
-
-
-def get_token_credentials():
-    oauth = OAuth1Session(CLIENT_KEY, client_secret=CLIENT_SECRET,
+def get_token_credentials(client_key, client_secret):
+    oauth = OAuth1Session(client_key, client_secret=client_secret,
                           callback_uri='oob')
     temporary_credentials = oauth.fetch_request_token(REQUEST_TOKEN_URL)
     oauth_token = temporary_credentials.get('oauth_token')
@@ -295,7 +348,7 @@ def get_token_credentials():
     webbrowser.open(authorization_url)
     verifier = click.prompt(click.style('Enter the PIN', fg='blue'))
 
-    oauth = OAuth1Session(CLIENT_KEY, client_secret=CLIENT_SECRET,
+    oauth = OAuth1Session(client_key, client_secret=client_secret,
                           resource_owner_key=oauth_token,
                           resource_owner_secret=oauth_token_secret,
                           verifier=verifier)
@@ -325,38 +378,47 @@ def raise_unexpected_error(err):
 
 
 def save_tweet(directory, tweets, num_images):
+    encoding = sys.getfilesystemencoding()
     session = Session()
     while True:
         try:
             tweet_data = tweets.get_nowait()
         except Queue.Empty:
             break
-        tweet = session.query(Tweet).get(tweet_data.id)
-        if tweet is None:
-            tweet = Tweet(id=tweet_data.id)
-            session.add(tweet)
-        old_image_urls = set([img.url for img in tweet.images])
-        new_image_urls = extract_image_urls(tweet_data)
-        tweet.images[:] = (img for img in tweet.images
-                           if img.url not in old_image_urls - new_image_urls)
-        for url in new_image_urls - old_image_urls:
-            local_path = '{0}_{1}'.format(tweet.id, os.path.basename(url))
-            o = urlparse(url)
-            if o.netloc == 'pbs.twimg.com':
-                url = url + ':orig'
-            tweet.images.append(Image(url=url, local_path=local_path))
-        for img in tweet.images:
-            path = os.path.join(directory, img.local_path)
-            if not os.path.exists(path):
-                image_data = requests.get(img.url).content
-                with open(path, 'wb') as f:
-                    f.write(image_data)
-        num_images.put(len(tweet.images))
-        session.commit()
-        tweets.task_done()
+        try:
+            tweet = session.query(Tweet).get(tweet_data.id)
+            if tweet is None:
+                tweet = Tweet(id=tweet_data.id)
+                session.add(tweet)
+            old_image_urls = set([img.url for img in tweet.images])
+            new_image_urls = extract_image_urls(tweet_data)
+            tweet.images[:] = (img for img in tweet.images
+                               if img.url not in old_image_urls -
+                                                 new_image_urls)
+            for url in new_image_urls - old_image_urls:
+                local_path = '{0}_{1}'.format(tweet.id, os.path.basename(url))
+                o = urlparse(url)
+                if o.netloc == 'pbs.twimg.com':
+                    url = url + ':orig'
+                tweet.images.append(Image(url=url, local_path=local_path))
+            for img in tweet.images:
+                path = os.path.join(directory, img.local_path.encode(encoding))
+                if not os.path.exists(path):
+                    image_data = requests.get(img.url).content
+                    with open(path, 'wb') as f:
+                        f.write(image_data)
+            num_images.put(len(tweet.images))
+            session.commit()
+        except Exception:
+            logger.exception('Unexpected error occurred while saving a tweet.')
+            logger.debug('The tweet was: %s',
+                         pprint.pformat(tweet_data.AsDict()))
+            session.rollback()
+        finally:
+            tweets.task_done()
 
 
-def delete_tweet(tweet, directory):
+def delete_tweet(session, tweet, directory):
     for img in tweet.images:
         path = os.path.join(directory, img.local_path)
         if os.path.exists(path):

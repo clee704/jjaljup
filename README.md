@@ -40,7 +40,7 @@ Azyu님의 [FavoImgs](https://github.com/azyu/FavoImgs/)를 보고 리눅스나 
 
 `JJALJUP_DATABASE_URI` 환경 변수를 설정하면 데이터베이스를 지정할 수 있습니다. 기본값은
 `sqlite:///jjaljup.db`로, 현재 경로에 `jjaljup.db`라는 SQLite 파일을 만듭니다.
-자세한 내용은 [SQLAlchemy 문서](http://docs.sqlalchemy.org/en/rel_0_9/core/engines.html)를
+자세한 내용은 [SQLAlchemy 문서](http://docs.sqlalchemy.org/en/rel_0_9/core/engines.html#database-urls)를
 참조하세요.
 
 옵션 등에 대해 알고 싶은 경우 커맨드를 입력한 후 `--help`를 덧붙이면 설명이 나옵니다.
