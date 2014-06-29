@@ -100,7 +100,7 @@ def add():
 
 @cli.command()
 def accounts():
-    """Show a list of saved accounts."""
+    """Show authorized accounts in the database."""
     users = list_users()
     if not users:
         print('No accounts.')
@@ -110,14 +110,14 @@ def accounts():
             print(u' {0}. {1} (@{2})'.format(i, user.name, user.screen_name))
 
 
-@cli.command()
+@cli.command(short_help='Download images in favorite tweets.')
 @click.option('-a', '--account', metavar='SCREEN_NAME',
               help='Select a Twitter account to sync.')
 @click.option('-d', '--directory', metavar='PATH', default='images',
               prompt=True, type=click.Path(file_okay=False, writable=True,
                                            resolve_path=True),
-              help='Select a local directory to sync. If it does not exist, '
-                   'new directories will be created as necessary.')
+              help='Select a local directory to sync. If the path does not '
+                   'exist, new directories will be created as necessary.')
 @click.option('--count', metavar='N', type=int,
               help='Number of favorite tweets to sync. If set, only the most '
                    'recent N tweets are examined.')
