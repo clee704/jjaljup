@@ -20,7 +20,7 @@ import sqlalchemy
 import twitter
 from click import secho
 from requests_oauthlib import OAuth1Session
-from sqlalchemy import Column, event, ForeignKey, Integer, String
+from sqlalchemy import Column, event, ForeignKey, Integer, String, Table
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
@@ -37,14 +37,18 @@ AUTHORIZATION_URL = 'https://api.twitter.com/oauth/authorize'
 ACCESS_TOKEN_URL = 'https://api.twitter.com/oauth/access_token'
 RATE_LIMIT_EXCEEDED = 88
 
+PATH_ENCODING = sys.getfilesystemencoding()
 
 Base = declarative_base()
 Session = sessionmaker()
 
 
-# TODO store the database securely, preferably using native features of
-# different operating systems.
-# See win32crypt.CryptProtectData
+favorite_table = Table('favorite', Base.metadata,
+    Column('user_id', Integer, ForeignKey('user.id'), primary_key=True),
+    Column('tweet_id', Integer, ForeignKey('tweet.id'), primary_key=True),
+)
+
+
 class User(Base):
     __tablename__ = 'user'
 
@@ -54,6 +58,8 @@ class User(Base):
     oauth_token = Column(String, nullable=False)
     oauth_token_secret = Column(String, nullable=False)
 
+    favorites = relationship('Tweet', secondary=favorite_table, lazy='dynamic')
+
     def __repr__(self):
         return '<User @{0}>'.format(self.screen_name)
 
@@ -62,8 +68,11 @@ class Tweet(Base):
     __tablename__ = 'tweet'
 
     id = Column(Integer, primary_key=True)
+
     images = relationship('Image', backref='tweet', lazy='joined',
                           cascade='all, delete-orphan', passive_deletes=True)
+    favorited_users = relationship('User', secondary=favorite_table,
+                                   lazy='dynamic')
 
     def __repr__(self):
         return '<Tweet(id={0})>'.format(self.id)
@@ -282,7 +291,8 @@ def sync(state, account, directory, count, delete, workers):
                     for _ in range(workers):
                         Thread(
                             target=save_tweet,
-                            args=(directory, input_queue, output_queue)
+                            args=(directory, user.id, input_queue,
+                                  output_queue)
                         ).start()
                     input_queue.join()
                     while not output_queue.empty():
@@ -308,13 +318,14 @@ def sync(state, account, directory, count, delete, workers):
             min_id = min(tweet_ids)
             num_deleted_tweets = 0
             num_deleted_images = 0
-            qr = state.session.query(Tweet).filter(~Tweet.id.in_(tweet_ids))
+            qr = user.favorites.filter(~Tweet.id.in_(tweet_ids))
             if count < float('inf'):
                 qr = qr.filter(Tweet.id >= min_id)
             for tweet in qr:
                 num_deleted_tweets += 1
                 num_deleted_images += len(tweet.images)
-                delete_tweet(state.session, tweet, directory)
+                delete_tweet(state.session, directory, user, tweet)
+            state.session.commit()
             if num_deleted_tweets > 0:
                 print('Deleted {0} images in {1} unfavorated tweets.'.format(
                     num_deleted_images, num_deleted_tweets))
@@ -336,8 +347,8 @@ def select_user(session, client_key, client_secret, screen_name=None):
     if users:
         n = len(users) + 1
         secho('Choose a Twitter account to work with:', fg='blue')
-        for i, user in enumerate(users, 1):
-            print(u' {0}. {1} (@{2})'.format(i, user.name, user.screen_name))
+        for i, u in enumerate(users, 1):
+            print(u' {0}. {1} (@{2})'.format(i, u.name, u.screen_name))
         print(' {0}. Add a new account'.format(n))
         choice = click.prompt(click.style('Choice: ', fg='blue'),
                               type=click.IntRange(1, n), prompt_suffix='')
@@ -414,8 +425,7 @@ def raise_unexpected_error(err):
                         u'(code: {code})').format(**err))
 
 
-def save_tweet(directory, tweets, num_images):
-    encoding = sys.getfilesystemencoding()
+def save_tweet(directory, user_id, tweets, num_images):
     session = Session()
     while True:
         try:
@@ -427,6 +437,9 @@ def save_tweet(directory, tweets, num_images):
             if tweet is None:
                 tweet = Tweet(id=tweet_data.id)
                 session.add(tweet)
+            if tweet.favorited_users.filter_by(id=user_id).count() == 0:
+                session.execute(favorite_table.insert().values(
+                    user_id=user_id, tweet_id=tweet.id))
             old_image_urls = set([img.url for img in tweet.images])
             new_image_urls = extract_image_urls(tweet_data)
             tweet.images[:] = (img for img in tweet.images
@@ -439,7 +452,8 @@ def save_tweet(directory, tweets, num_images):
                     url = url + ':orig'
                 tweet.images.append(Image(url=url, local_path=local_path))
             for img in tweet.images:
-                path = os.path.join(directory, img.local_path.encode(encoding))
+                path = os.path.join(directory,
+                                    img.local_path.encode(PATH_ENCODING))
                 if not os.path.exists(path):
                     image_data = requests.get(img.url).content
                     with open(path, 'wb') as f:
@@ -455,17 +469,18 @@ def save_tweet(directory, tweets, num_images):
             tweets.task_done()
 
 
-def delete_tweet(session, tweet, directory):
+def delete_tweet(session, directory, user, tweet):
     for img in tweet.images:
-        path = os.path.join(directory, img.local_path)
+        path = os.path.join(directory, img.local_path.encode(PATH_ENCODING))
         if os.path.exists(path):
             try:
                 os.unlink(path)
             except OSError as e:
                 secho(u'Failed to delete the image at {0}: {1}'.format(
                     path, e.strerror), fg='red')
-    session.delete(tweet)
-    session.commit()
+    user.favorites.remove(tweet)
+    if tweet.favorited_users.count() == 0:
+        session.delete(tweet)
 
 
 def is_image_url(url):
