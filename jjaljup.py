@@ -1,6 +1,7 @@
 #! /usr/bin/env python
 from __future__ import print_function
 
+import code
 import logging
 import os
 import pprint
@@ -50,6 +51,9 @@ class User(Base):
     oauth_token = Column(String, nullable=False)
     oauth_token_secret = Column(String, nullable=False)
 
+    def __repr__(self):
+        return '<User @{0}>'.format(self.screen_name)
+
 
 class Tweet(Base):
     __tablename__ = 'tweet'
@@ -57,6 +61,9 @@ class Tweet(Base):
     id = Column(Integer, primary_key=True)
     images = relationship('Image', backref='tweet', lazy='joined',
                           cascade='all, delete-orphan', passive_deletes=True)
+
+    def __repr__(self):
+        return '<Tweet(id={0})>'.format(self.id)
 
 
 class Image(Base):
@@ -67,6 +74,9 @@ class Image(Base):
                       nullable=False, index=True)
     url = Column(String, nullable=False)
     local_path = Column(String, nullable=False)
+
+    def __repr__(self):
+        return '<Image(url={0!r})>'.format(self.url)
 
 
 @event.listens_for(Engine, 'connect')
@@ -131,6 +141,30 @@ def session_option(f):
 @click.option('--debug', is_flag=True, default=False, help='Show debug logs.')
 def cli(debug):
     logging.basicConfig(level=logging.DEBUG if debug else logging.WARN)
+
+
+@cli.command(short_help='Start a Python interpreter to debug.')
+@session_option
+@client_credentials_option
+@pass_state
+def debug(state):
+    """
+    Start a Python interpreter to debug. This command is intended for
+    developers.
+
+    """
+    def create_api(user):
+        return twitter.Api(consumer_key=state.client_key,
+                           consumer_secret=state.client_secret,
+                           access_token_key=user.oauth_token,
+                           access_token_secret=user.oauth_token_secret)
+    ctx = {'state': state, 'session': state.session, 'create_api': create_api}
+    ctx.update(globals())
+    try:
+        from IPython import embed
+        embed(user_ns=ctx)
+    except ImportError:
+        code.interact(local=ctx)
 
 
 @cli.command()
