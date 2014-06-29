@@ -230,8 +230,9 @@ def sync(state, account, directory, count, delete, workers):
 
     """
     CALL_SIZE = 200
+    INFINITY = float('inf')
     if count is None:
-        count = float('inf')
+        count = INFINITY
 
     if not os.path.exists(directory):
         os.makedirs(directory)
@@ -256,7 +257,7 @@ def sync(state, account, directory, count, delete, workers):
         eta_min = max(1, int(min(count, num_favorites) / CALL_SIZE))
         eta_max = max(10, int(min(count, num_favorites) / CALL_SIZE * 2))
         print('You have {0} favorite tweets.'.format(num_favorites))
-        if count < float('inf'):
+        if count != INFINITY:
             print('Only the most recent {0} tweets will be examined.'.format(
                 count))
         print('It may take {0}-{1} minutes to complete.'.format(eta_min,
@@ -264,19 +265,21 @@ def sync(state, account, directory, count, delete, workers):
 
     max_id = None
     tweet_ids = set()
-    last = False
     num_saved_tweets = 0
     num_saved_images = 0
     try:
+        last = False
         while not last:
             status = get_rate_limit_status(api, 'favorites')
             data = status['favorites']['/favorites/list']
             limit = data['limit']
             remaining = data['remaining']
-            print('Remaining API calls: {0}/{1}'.format(remaining, limit))
+            print_api_status = lambda: print(
+                'Remaining API calls: {0}/{1}'.format(remaining, limit))
+            print_api_status()
             reset = data['reset']
             try:
-                while remaining > 0 and not last:
+                while remaining > 0:
                     tweets = api.GetFavorites(count=CALL_SIZE,
                                               max_id=max_id)
                     remaining -= 1
@@ -297,20 +300,26 @@ def sync(state, account, directory, count, delete, workers):
                     input_queue.join()
                     while not output_queue.empty():
                         num_saved_images += output_queue.get_nowait()
-                    last = len(tweets) == 0 or num_saved_tweets >= count
                     max_id = tweets[-1].id - 1 if tweets else 0
-                    print(('{0} tweets have been processed. '
-                           'Remaining API calls: {1}/{2}').format(
-                        num_saved_tweets, remaining, limit))
+                    last = len(tweets) == 0 or num_saved_tweets >= count
+                    if last:
+                        if count == INFINITY:
+                            print('There are no more tweets. ', end='')
+                            print_api_status()
+                        break
+                    print('{0} tweets have been processed. '.format(
+                        num_saved_tweets), end='')
+                    print_api_status()
             except twitter.TwitterError as e:
                 err = e.args[0][0]
                 if err['code'] != RATE_LIMIT_EXCEEDED:
                     raise_unexpected_error(err)
-            if not last:
-                reset_dt = datetime.fromtimestamp(reset)
-                print(('Rate limit exceeded. '
-                       'Waiting for the next round at {0}.').format(reset_dt))
-                time.sleep(max(1, reset - time.time() + 10))
+            if last:
+                break
+            reset_dt = datetime.fromtimestamp(reset)
+            print(('Rate limit exceeded. '
+                   'Waiting for the next round at {0}.').format(reset_dt))
+            time.sleep(max(1, reset - time.time() + 10))
         secho(b'Synchronized {0} images in {1} tweets into {2}'.format(
             num_saved_images, num_saved_tweets, directory))
     finally:
@@ -319,7 +328,7 @@ def sync(state, account, directory, count, delete, workers):
             num_deleted_tweets = 0
             num_deleted_images = 0
             qr = user.favorites.filter(~Tweet.id.in_(tweet_ids))
-            if count < float('inf'):
+            if count != INFINITY:
                 qr = qr.filter(Tweet.id >= min_id)
             for tweet in qr:
                 num_deleted_tweets += 1
