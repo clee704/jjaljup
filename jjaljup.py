@@ -12,7 +12,7 @@ import time
 import webbrowser
 from datetime import datetime
 from distutils.version import StrictVersion
-from HTMLParser import HTMLParser, HTMLParseError
+from HTMLParser import HTMLParseError, HTMLParser
 from threading import Thread
 from urlparse import urlparse
 
@@ -26,7 +26,9 @@ from sqlalchemy import Column, event, ForeignKey, Integer, String, Table
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
+from twitter import Api as ApiBase
 from twitter import Status as StatusBase
+from twitter import TwitterError
 
 __version__ = '0.0.2'
 
@@ -225,7 +227,7 @@ def accounts(state):
               help='Number of favorite tweets to sync. If set, only the most '
                    'recent N tweets are examined.')
 @click.option('--delete', is_flag=True, default=False,
-              help='Delete unfavorated tweets and images from the directory. '
+              help='Delete unfavorited tweets and images from the directory. '
                    'Disabled by default.')
 @click.option('--workers', metavar='N', type=int, default=8,
               help='Number of threads to run concurrently (defaults to 8).')
@@ -260,10 +262,9 @@ def sync(state, account, directory, count, delete, workers):
     num_favorites = None
     try:
         num_favorites = api.VerifyCredentials().favourites_count
-    except twitter.TwitterError as e:
-        err = e.args[0][0]
-        if err['code'] != RATE_LIMIT_EXCEEDED:
-            raise_unexpected_error(err)
+    except TwitterError as e:
+        if not is_rate_limited(e):
+            raise_unexpected_error(e)
     if num_favorites is not None:
         eta_min = max(1, int(min(count, num_favorites) / CALL_SIZE))
         eta_max = max(10, int(min(count, num_favorites) / CALL_SIZE * 2))
@@ -303,11 +304,9 @@ def sync(state, account, directory, count, delete, workers):
                             break
                     output_queue = Queue.Queue()
                     for _ in range(workers):
-                        Thread(
-                            target=save_tweet,
-                            args=(directory, user.id, input_queue,
-                                  output_queue)
-                        ).start()
+                        Thread(target=save_tweet_mt,
+                               args=(directory, user.id, input_queue,
+                                     output_queue)).start()
                     input_queue.join()
                     while not output_queue.empty():
                         num_saved_images += output_queue.get_nowait()
@@ -321,10 +320,9 @@ def sync(state, account, directory, count, delete, workers):
                     print('{0} tweets have been processed. '.format(
                         num_saved_tweets), end='')
                     print_api_status()
-            except twitter.TwitterError as e:
-                err = e.args[0][0]
-                if err['code'] != RATE_LIMIT_EXCEEDED:
-                    raise_unexpected_error(err)
+            except TwitterError as e:
+                if not is_rate_limited(e):
+                    raise_unexpected_error(e)
             if last:
                 break
             reset_dt = datetime.fromtimestamp(reset)
@@ -347,8 +345,77 @@ def sync(state, account, directory, count, delete, workers):
                 delete_tweet(state.session, directory, user, tweet)
             state.session.commit()
             if num_deleted_tweets > 0:
-                print('Deleted {0} images in {1} unfavorated tweets.'.format(
+                print('Deleted {0} images in {1} unfavorited tweets.'.format(
                     num_deleted_images, num_deleted_tweets))
+
+
+@cli.command(short_help='Monitor account activity and download new images.')
+@click.option('-a', '--account', metavar='SCREEN_NAME',
+              help='Select a Twitter account to monitor.')
+@click.option('-d', '--directory', metavar='PATH', default='images',
+              prompt=True, type=click.Path(file_okay=False, writable=True,
+                                           resolve_path=True),
+              help='Select a local directory to sync. If the path does not '
+                   'exist, new directories will be created as necessary.')
+@click.option('--delete', is_flag=True, default=False,
+              help='Delete unfavorited tweets and images from the directory. '
+                   'Disabled by default.')
+@session_option
+@client_credentials_option
+@pass_state
+def watch(state, account, directory, delete):
+    """
+    Monitor the selected account's activity and save images in tweets that
+    is favorited by the account.
+
+    """
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+        secho(b'Created a directory at {0}'.format(directory))
+    secho(b'Images will be downloaded into {0}'.format(directory))
+
+    session = state.session
+    user = select_user(session, state.client_key, state.client_secret, account)
+    api = twitter.Api(consumer_key=state.client_key,
+                      consumer_secret=state.client_secret,
+                      access_token_key=user.oauth_token,
+                      access_token_secret=user.oauth_token_secret)
+
+    stream = api.GetUserStream()
+    try:
+        for msg in stream:
+            if msg.get('event'):
+                if msg['source']['id'] != user.id:
+                    continue
+                td = twitter.Status.NewFromJsonDict(msg['target_object'])
+                if msg['event'] == 'favorite':
+                    # FIXME extended_entities are missing. Is it a bug in the
+                    # Twitter Streaming API?
+                    # See https://dev.twitter.com/issues/1724
+                    num_images = save_tweet(session, directory, user.id, td)
+                    color = 'green' if num_images else 'reset'
+                    secho(('{0} images are saved from a favorited '
+                           'tweet: ').format(num_images), fg=color, nl=False)
+                    print(td.text.replace('\n', ' '))
+                elif msg['event'] == 'unfavorite' and delete:
+                    tweet = user.favorites.filter(Tweet.id == td.id).scalar()
+                    if tweet is None:
+                        continue
+                    num_images = len(tweet.images)
+                    delete_tweet(session, directory, user, tweet)
+                    color = 'yellow' if num_images else 'reset'
+                    secho(('{0} images are deleted from an unfavorited '
+                           'tweet: ').format(num_images), fg=color, nl=False)
+                    print(td.text.replace('\n', ' '))
+                session.commit()
+    except TwitterError as e:
+        if is_rate_limited(e):
+            secho('Exceeded connection limit for user. '
+                  'Please try again later.', fg='red', file=sys.stderr)
+        else:
+            raise_unexpected_error(e)
+    finally:
+        stream.close()
 
 
 def list_users(session):
@@ -430,22 +497,28 @@ def get_rate_limit_status(api, resources):
     while True:
         try:
             return api.GetRateLimitStatus(resources)['resources']
-        except twitter.TwitterError as e:
-            err = e.args[0][0]
-            if err['code'] == RATE_LIMIT_EXCEEDED:
+        except TwitterError as e:
+            if is_rate_limited(e):
                 secho('Rate limit exceeded. Waiting for 3 minutes before '
                       'trying again.', fg='red', file=sys.stderr)
             else:
-                raise_unexpected_error(err)
+                raise_unexpected_error(e)
         time.sleep(180)
 
 
-def raise_unexpected_error(err):
-    raise RuntimeError((u'Unexpected error occured: {message} '
-                        u'(code: {code})').format(**err))
+def is_rate_limited(twitter_error):
+    data = twitter_error.args[0]
+    if isinstance(data, list):
+        return RATE_LIMIT_EXCEEDED in (e['code'] for e in data)
+    else:
+        return data == 'Exceeded connection limit for user'
 
 
-def save_tweet(directory, user_id, tweets_queue, num_images_queue):
+def raise_unexpected_error(e):
+    raise RuntimeError('Unexpected error occured: {0!r}'.format(e))
+
+
+def save_tweet_mt(directory, user_id, tweets_queue, num_images_queue):
     session = Session()
     while True:
         try:
@@ -453,44 +526,7 @@ def save_tweet(directory, user_id, tweets_queue, num_images_queue):
         except Queue.Empty:
             break
         try:
-            tweet = session.query(Tweet).get(tweet_data.id)
-            if tweet is None:
-                tweet = Tweet(id=tweet_data.id)
-                session.add(tweet)
-            if tweet.favorited_users.filter_by(id=user_id).count() == 0:
-                session.execute(favorite_table.insert().values(
-                    user_id=user_id, tweet_id=tweet.id))
-            old_image_urls = set([img.url for img in tweet.images])
-            new_image_urls = extract_image_urls(tweet_data)
-            tweet.images[:] = (img for img in tweet.images
-                               if img.url not in old_image_urls -
-                                                 new_image_urls)
-            for url in new_image_urls - old_image_urls:
-                local_path = '{0}_{1}'.format(tweet.id, os.path.basename(url))
-                o = urlparse(url)
-                if o.netloc == 'pbs.twimg.com' and 'tweet_video' not in url:
-                    url = url + ':orig'
-                tweet.images.append(Image(url=url, local_path=local_path))
-            num_images = 0
-            for img in tweet.images:
-                path = os.path.join(directory,
-                                    img.local_path.encode(PATH_ENCODING))
-                if os.path.exists(path):
-                    num_images += 1
-                else:
-                    resp = requests.get(img.url)
-                    if resp.status_code != 200:
-                        secho(u'Got status code {0} from {1}'.format(
-                            resp.status_code, img.url))
-                        continue
-                    image_data = resp.content
-                    try:
-                        with open(path, 'wb') as f:
-                            f.write(image_data)
-                        num_images += 1
-                    except IOError as e:
-                        secho(u'Failed to save the image to {0}: {1}'.format(
-                            path, e.strerror), fg='red', file=sys.stderr)
+            num_images = save_tweet(session, directory, user_id, tweet_data)
             num_images_queue.put(num_images)
             session.commit()
         except Exception:
@@ -500,6 +536,48 @@ def save_tweet(directory, user_id, tweets_queue, num_images_queue):
             session.rollback()
         finally:
             tweets_queue.task_done()
+
+
+def save_tweet(session, directory, user_id, tweet_data):
+    tweet = session.query(Tweet).get(tweet_data.id)
+    if tweet is None:
+        tweet = Tweet(id=tweet_data.id)
+        session.add(tweet)
+    if tweet.favorited_users.filter_by(id=user_id).count() == 0:
+        session.execute(favorite_table.insert().values(
+            user_id=user_id, tweet_id=tweet.id))
+    old_image_urls = set([img.url for img in tweet.images])
+    new_image_urls = extract_image_urls(tweet_data)
+    tweet.images[:] = (img for img in tweet.images
+                       if img.url not in old_image_urls -
+                                         new_image_urls)
+    for url in new_image_urls - old_image_urls:
+        local_path = '{0}_{1}'.format(tweet.id, os.path.basename(url))
+        o = urlparse(url)
+        if o.netloc == 'pbs.twimg.com' and 'tweet_video' not in url:
+            url = url + ':orig'
+        tweet.images.append(Image(url=url, local_path=local_path))
+    num_images = 0
+    for img in tweet.images:
+        path = os.path.join(directory,
+                            img.local_path.encode(PATH_ENCODING))
+        if os.path.exists(path):
+            num_images += 1
+        else:
+            resp = requests.get(img.url)
+            if resp.status_code != 200:
+                secho(u'Got status code {0} from {1}'.format(
+                    resp.status_code, img.url))
+                continue
+            image_data = resp.content
+            try:
+                with open(path, 'wb') as f:
+                    f.write(image_data)
+                num_images += 1
+            except IOError as e:
+                secho(u'Failed to save the image to {0}: {1}'.format(
+                    path, e.strerror), fg='red', file=sys.stderr)
+    return num_images
 
 
 def delete_tweet(session, directory, user, tweet):
@@ -586,6 +664,78 @@ class Status(StatusBase):
         return status
 
 twitter.Status = Status
+
+
+# Hack until following issues are resolved:
+#  1. Broken GetUserStream (https://github.com/bear/python-twitter/pull/162)
+#  2. Bugs in Streaming API where responses are slopily parsed (newline should
+#     be \r\n instead of \n and should return a message as soon as it is
+#     received) and delimited=length is not handled at all are resolved.
+class Api(ApiBase):
+
+    def GetUserStream(self, replies='all', withuser='user', track=None,
+                      locations=None, delimited=None, stall_warning=None,
+                      stringify_friend_ids=False):
+        if not self.__auth:
+            raise TwitterError("twitter.Api instance must be authenticated")
+        data = {}
+        if stringify_friend_ids:
+            data['stringify_friend_ids'] = 'true'
+        if replies is not None:
+            data['replies'] = replies
+        if withuser is not None:
+            data['with'] = withuser
+        if track is not None:
+            data['track'] = ','.join(track)
+        if locations is not None:
+            data['locations'] = ','.join(locations)
+        if delimited is not None:
+            data['delimited'] = str(delimited)
+        if delimited is not None:
+            data['stall_warning'] = str(stall_warning)
+        url = 'https://userstream.twitter.com/1.1/user.json'
+        r = self._RequestStream(url, 'POST', data=data)
+        return self._IterMessages(r, delimited)
+
+    def _IterMessages(self, resp, delimited):
+        enc = 'utf-8'
+        buf = bytearray()
+        for chunk in resp.iter_content(1):
+            chunk_bytes = chunk.encode(enc)
+            # chunk_bytes can contain more than one character because:
+            #  1. It is UTF-8 encoded
+            #  2. Decompressed from gzip data if Content-Encoding is gzip
+            buf.extend(chunk_bytes)
+            suffix_length = len(chunk_bytes) + (1 if buf else 0)
+            suffix = buf[-suffix_length:]
+            i = suffix.find(b'\r\n')
+            if i != -1:
+                j = len(buf) - (suffix_length - i)
+                line = ''.join(memoryview(buf)[:j])
+                buf[:] = buf[j + 2:]
+            else:
+                continue
+            if not line:
+                continue
+            if line == 'Exceeded connection limit for user':
+                raise TwitterError('Exceeded connection limit for user')
+
+            # delimited=length is useless when content-encoding is gzip.
+            # How can we read N "decompressed" characters from a compressed
+            # stream? Here we ignore length lines.
+            if delimited == 'length':
+                try:
+                    message_length = int(line)
+                    continue
+                except ValueError:
+                    pass
+
+            if line:
+                data = self._ParseAndCheckTwitter(line)
+                yield data
+
+
+twitter.Api = Api
 
 
 def main():
