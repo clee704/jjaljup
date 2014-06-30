@@ -23,6 +23,7 @@ import requests_oauthlib
 import sqlalchemy
 import twitter
 from click import secho
+from pyquery import PyQuery as pq
 from requests_oauthlib import OAuth1Session
 from sqlalchemy import Column, event, ForeignKey, Integer, String, Table
 from sqlalchemy.engine import Engine
@@ -645,6 +646,10 @@ def extract_images(tweet_data):
             img = get_twitpic(url, o)
             if img:
                 images.append(img)
+        elif o.netloc == 'yfrog.com':
+            img = get_yfrog(url, o)
+            if img:
+                images.append(img)
     for url in image_urls:
         name = os.path.basename(url)
         o = urlparse(url)
@@ -678,6 +683,16 @@ def get_twitpic(url, o):
         img = Image(url=url, name=os.path.basename(urlparse(resp.url).path))
         img.cached_data = resp.content
         return img
+
+
+def get_yfrog(page_url, o):
+    page_url_2 = 'http://twitter.yfrog.com/z' + o.path
+    resp = requests.get(page_url_2)
+    if resp.status_code != 200:
+        return
+    url = pq(resp.text).find('#the-image img').attr('src')
+    if url:
+        return Image(url=url)
 
 
 class TwitterAnimatedGifExtracter(HTMLParser):
