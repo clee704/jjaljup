@@ -48,7 +48,8 @@ Base = declarative_base()
 Session = sessionmaker()
 
 
-favorite_table = Table('favorite', Base.metadata,
+favorite_table = Table(
+    'favorite', Base.metadata,
     Column('user_id', Integer, ForeignKey('user.id', ondelete='CASCADE'),
            primary_key=True),
     Column('tweet_id', Integer, ForeignKey('tweet.id', ondelete='CASCADE'),
@@ -295,8 +296,7 @@ def sync(state, account, directory, count, delete, workers):
             reset = data['reset']
             try:
                 while remaining > 0:
-                    tweets = api.GetFavorites(count=CALL_SIZE,
-                                              max_id=max_id)
+                    tweets = api.GetFavorites(count=CALL_SIZE, max_id=max_id)
                     remaining -= 1
                     input_queue = Queue.Queue()
                     for tweet in tweets:
@@ -315,8 +315,8 @@ def sync(state, account, directory, count, delete, workers):
                         num_saved_images += output_queue.get_nowait()
                     max_id = tweets[-1].id - 1 if tweets else 0
                     print('There are no more tweets. ' if len(tweets) == 0 else
-                        '{0} tweets have been processed. '.format(
-                            num_saved_tweets), end='')
+                          '{0} tweets have been processed. '.format(
+                          num_saved_tweets), end='')
                     print_api_status()
                     last = len(tweets) == 0 or num_saved_tweets >= count
                     if last:
@@ -564,15 +564,14 @@ def save_tweet(session, directory, user_id, tweet_data):
     debug_timer_end('save_tweet_2')
     num_images = 0
     for img in tweet.images:
-        path = os.path.join(directory,
-                            img.local_path.encode(PATH_ENCODING))
+        path = os.path.join(directory, img.local_path.encode(PATH_ENCODING))
         if os.path.exists(path):
             num_images += 1
         else:
             resp = requests.get(img.url)
             if resp.status_code != 200:
-                secho(u'Got status code {0} from {1}'.format(
-                    resp.status_code, img.url))
+                secho(u'Got status code {0} from {1}'.format(resp.status_code,
+                                                             img.url))
                 continue
             image_data = resp.content
             try:
@@ -742,7 +741,6 @@ class Api(ApiBase):
             if line:
                 data = self._ParseAndCheckTwitter(line)
                 yield data
-
 
 twitter.Api = Api
 
