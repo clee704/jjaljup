@@ -48,8 +48,10 @@ Session = sessionmaker()
 
 
 favorite_table = Table('favorite', Base.metadata,
-    Column('user_id', Integer, ForeignKey('user.id'), primary_key=True),
-    Column('tweet_id', Integer, ForeignKey('tweet.id'), primary_key=True),
+    Column('user_id', Integer, ForeignKey('user.id', ondelete='CASCADE'),
+           primary_key=True),
+    Column('tweet_id', Integer, ForeignKey('tweet.id', ondelete='CASCADE'),
+           primary_key=True),
 )
 
 
