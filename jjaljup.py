@@ -596,18 +596,18 @@ def save_tweet(session, directory, user_id, tweet_data):
 
 
 def delete_tweet(session, directory, user, tweet):
+    for img in tweet.images:
+        path = os.path.join(
+            directory,
+            u'{0}_{1}'.format(tweet.id, img.name).encode(PATH_ENCODING))
+        if os.path.exists(path):
+            try:
+                os.unlink(path)
+            except OSError as e:
+                secho(u'Failed to delete the image at {0}: {1}'.format(
+                    path, e.strerror), fg='red', file=sys.stderr)
     debug_timer_start('delete_tweet')
     with session.begin():
-        for img in tweet.images:
-            path = os.path.join(
-                directory,
-                u'{0}_{1}'.format(tweet.id, img.name).encode(PATH_ENCODING))
-            if os.path.exists(path):
-                try:
-                    os.unlink(path)
-                except OSError as e:
-                    secho(u'Failed to delete the image at {0}: {1}'.format(
-                        path, e.strerror), fg='red', file=sys.stderr)
         user.favorites.remove(tweet)
         if tweet.favorited_users.count() == 0:
             session.delete(tweet)
