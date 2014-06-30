@@ -13,7 +13,6 @@ import time
 import webbrowser
 from datetime import datetime
 from distutils.version import StrictVersion
-from HTMLParser import HTMLParseError, HTMLParser
 from threading import Thread
 from urlparse import urlparse
 
@@ -662,17 +661,14 @@ def extract_images(tweet_data):
     return images
 
 
-def get_twitter_agif(url, o):
-    resp = requests.get(url)
-    if resp.status_code == 404:
+def get_twitter_agif(page_url, o):
+    resp = requests.get(page_url)
+    if resp.status_code != 200:
         return
-    parser = TwitterAnimatedGifExtracter()
-    try:
-        parser.feed(resp.text)
-    except HTMLParseError:
-        return
-    if parser.url:
-        return Image(url=parser.url)
+    url = pq(resp.text).find('video.animated-gif source[type="video/mp4"]') \
+                       .attr('video-src')
+    if url:
+        return Image(url=url)
 
 
 def get_twitpic(url, o):
@@ -693,28 +689,6 @@ def get_yfrog(page_url, o):
     url = pq(resp.text).find('#the-image img').attr('src')
     if url:
         return Image(url=url)
-
-
-class TwitterAnimatedGifExtracter(HTMLParser):
-
-    def __init__(self):
-        HTMLParser.__init__(self)
-        self.found_video_tag = False
-        self.url = None
-
-    def handle_starttag(self, tag, attrs_list):
-        attrs = dict(attrs_list)
-        classes = attrs.get('class', '').split()
-        if not self.found_video_tag:
-            if tag == 'video' and 'animated-gif' in classes:
-                self.found_video_tag = True
-        else:
-            if tag == 'source' and attrs.get('type') == 'video/mp4':
-                self.url = attrs.get('video-src')
-
-    def handle_endtag(self, tag):
-        if tag == 'video' and self.found_video_tag:
-            self.found_video_tag = False
 
 
 # Hack until https://github.com/bear/python-twitter/issues/160 is resolved
