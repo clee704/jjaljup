@@ -248,7 +248,7 @@ def sync(state, account, directory, count, delete, workers):
     """
     CALL_SIZE = 200
     INFINITY = float('inf')
-    if count is None:
+    if not count:
         count = INFINITY
 
     if not os.path.exists(directory):
@@ -389,10 +389,8 @@ def watch(state, account, directory, delete):
     stream = api.GetUserStream()
     try:
         for msg in stream:
-            if msg.get('event'):
+            if 'event' in msg and 'target_object' in msg:
                 if msg['source']['id'] != user.id:
-                    continue
-                if 'target_object' not in msg:
                     continue
                 td = twitter.Status.NewFromJsonDict(msg['target_object'])
                 if msg['event'] == 'favorite':
@@ -518,7 +516,7 @@ def get_rate_limit_status(api, resources):
 def is_rate_limited(twitter_error):
     data = twitter_error.args[0]
     if isinstance(data, list):
-        return RATE_LIMIT_EXCEEDED in (e['code'] for e in data)
+        return RATE_LIMIT_EXCEEDED in (e.get('code') for e in data)
     else:
         return data == 'Exceeded connection limit for user'
 
@@ -619,15 +617,19 @@ def is_image(resp):
 def extract_image_urls(tweet_data):
     image_urls = set()
     for media in tweet_data.media:
-        if media['type'] == 'photo':
-            image_urls.add(media['media_url'])
+        if media.get('type') == 'photo':
+            url = media.get('media_url_https', media.get('media_url'))
+            if url:
+                image_urls.add(url)
     for url_data in tweet_data.urls:
         url = url_data.expanded_url
+        if not url:
+            continue
         if is_image_url(url):
             image_urls.add(url)
         elif re.match(r'https?://twitter.com/.*/photo/\d+', url):
             mp4_url = extract_twitter_agif(url)
-            if mp4_url is not None:
+            if mp4_url:
                 image_urls.add(mp4_url)
     return image_urls
 
@@ -659,7 +661,7 @@ class TwitterAnimatedGifExtracter(HTMLParser):
                 self.found_video_tag = True
         else:
             if tag == 'source' and attrs.get('type') == 'video/mp4':
-                self.url = attrs['video-src']
+                self.url = attrs.get('video-src')
 
     def handle_endtag(self, tag):
         if tag == 'video' and self.found_video_tag:
