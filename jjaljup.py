@@ -392,6 +392,8 @@ def watch(state, account, directory, delete):
             if msg.get('event'):
                 if msg['source']['id'] != user.id:
                     continue
+                if 'target_object' not in msg:
+                    continue
                 td = twitter.Status.NewFromJsonDict(msg['target_object'])
                 if msg['event'] == 'favorite':
                     # FIXME extended_entities are missing. Is it a bug in the
