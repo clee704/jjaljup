@@ -288,7 +288,6 @@ def sync(state, account, directory, count, delete, workers):
     for _ in range(workers):
         t = Thread(target=save_tweet_mt,
                    args=(directory, user.id, input_queue, output_queue))
-        t.daemon = True
         t.start()
     try:
         last = False
@@ -334,6 +333,8 @@ def sync(state, account, directory, count, delete, workers):
             print(('Rate limit exceeded. '
                    'Waiting for the next round at {0}.').format(reset_dt))
             time.sleep(max(1, reset - time.time() + 10))
+        for _ in range(workers):
+            input_queue.put(None)  # Stop workers.
         secho(b'Synchronized {0} images in {1} tweets into {2}'.format(
             num_saved_images, num_saved_tweets, directory))
     finally:
@@ -528,6 +529,8 @@ def save_tweet_mt(directory, user_id, tweets_queue, num_images_queue):
     session = Session(autocommit=True)
     while True:
         tweet_data = tweets_queue.get()
+        if tweet_data is None:
+            break
         try:
             num_images = save_tweet(session, directory, user_id, tweet_data)
             num_images_queue.put(num_images)
