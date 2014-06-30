@@ -400,7 +400,7 @@ def watch(state, account, directory, delete):
                     # Twitter Streaming API?
                     # See https://dev.twitter.com/issues/1724
                     num_images = save_tweet(session, directory, user.id, td)
-                    color = 'green' if num_images else 'reset'
+                    color = 'green' if num_images else 'yellow'
                     secho(('{0} images are saved from a favorited '
                            'tweet: ').format(num_images), fg=color, nl=False)
                     print(td.text.replace('\n', ' '))
@@ -410,7 +410,7 @@ def watch(state, account, directory, delete):
                         continue
                     num_images = len(tweet.images)
                     delete_tweet(session, directory, user, tweet)
-                    color = 'yellow' if num_images else 'reset'
+                    color = 'red' if num_images else 'yellow'
                     secho(('{0} images are deleted from an unfavorited '
                            'tweet: ').format(num_images), fg=color, nl=False)
                     print(td.text.replace('\n', ' '))
