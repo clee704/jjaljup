@@ -19,6 +19,7 @@ from urlparse import urlparse
 
 import click
 import requests
+import requests_oauthlib
 import sqlalchemy
 import twitter
 from click import secho
@@ -273,7 +274,7 @@ def sync(state, account, directory, count, delete, workers):
         num_favorites = api.VerifyCredentials().favourites_count
     except TwitterError as e:
         if not is_rate_limited(e):
-            raise_unexpected_error(e)
+            raise
     if num_favorites is not None:
         eta_min = max(1, int(min(count, num_favorites) / CALL_SIZE))
         eta_max = max(10, int(min(count, num_favorites) / CALL_SIZE * 2))
@@ -331,7 +332,7 @@ def sync(state, account, directory, count, delete, workers):
                         break
             except TwitterError as e:
                 if not is_rate_limited(e):
-                    raise_unexpected_error(e)
+                    raise
             if last:
                 break
             reset_dt = datetime.fromtimestamp(reset)
@@ -425,7 +426,7 @@ def watch(state, account, directory, delete):
             secho('Exceeded connection limit for user. '
                   'Please try again later.', fg='red', file=sys.stderr)
         else:
-            raise_unexpected_error(e)
+            raise
     finally:
         stream.close()
 
@@ -517,7 +518,7 @@ def get_rate_limit_status(api, resources):
                 secho('Rate limit exceeded. Waiting for 3 minutes before '
                       'trying again.', fg='red', file=sys.stderr)
             else:
-                raise_unexpected_error(e)
+                raise
         time.sleep(180)
 
 
@@ -527,10 +528,6 @@ def is_rate_limited(twitter_error):
         return RATE_LIMIT_EXCEEDED in (e.get('code') for e in data)
     else:
         return data == 'Exceeded connection limit for user'
-
-
-def raise_unexpected_error(e):
-    raise RuntimeError('Unexpected error occured: {0!r}'.format(e))
 
 
 def save_tweet_mt(directory, user_id, tweets_queue, num_images_queue):
@@ -828,6 +825,9 @@ def main():
         else:
             # TODO instruct how to migrate
             pass
+    except requests_oauthlib.oauth1_session.TokenRequestDenied:
+        secho('You entered a wrong PIN. Please try again.', fg='red',
+              file=sys.stderr)
 
 
 if __name__ == '__main__':
