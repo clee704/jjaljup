@@ -614,14 +614,6 @@ def delete_tweet(session, directory, user, tweet):
     debug_timer_end('delete_tweet')
 
 
-def is_image_url(url):
-    return url.lower().rsplit('.', 1)[-1] in IMAGE_EXTENSIONS
-
-
-def is_image(resp):
-    return resp.headers.get('content-type', '').startswith('image')
-
-
 def extract_images(tweet_data):
     images = []
     image_urls = []
@@ -635,7 +627,7 @@ def extract_images(tweet_data):
         if not url:
             continue
         o = urlparse(url)
-        if is_image_url(url):
+        if is_image_url(url, o):
             image_urls.append(url)
         elif o.netloc == 'twitter.com' and re.match(r'/.*/photo/\d+', o.path):
             img = get_twitter_agif(url, o)
@@ -650,19 +642,27 @@ def extract_images(tweet_data):
             if img:
                 images.append(img)
     for url in image_urls:
-        name = os.path.basename(url)
         o = urlparse(url)
+        name = os.path.basename(o.path)
         if o.netloc == 'pbs.twimg.com' and 'tweet_video' not in url:
             url = url + ':orig'
         images.append(Image(url=url, name=name))
     for img in images:
         if not img.name:
-            img.name = os.path.basename(img.url)
+            img.name = os.path.basename(urlparse(img.url).path)
     return images
 
 
-def get_twitter_agif(page_url, o):
-    resp = requests.get(page_url)
+def is_image_url(url, o):
+    return o.path.lower().rsplit('.', 1)[-1] in IMAGE_EXTENSIONS
+
+
+def is_image(resp):
+    return resp.headers.get('content-type', '').startswith('image')
+
+
+def get_twitter_agif(original_url, o):
+    resp = requests.get(original_url)
     if resp.status_code != 200:
         return
     url = pq(resp.text).find('video.animated-gif source[type="video/mp4"]') \
@@ -671,19 +671,19 @@ def get_twitter_agif(page_url, o):
         return Image(url=url)
 
 
-def get_twitpic(url, o):
+def get_twitpic(original_url, o):
     url = 'http://twitpic.com/show/full' + o.path
     resp = requests.get(url)
-    if (resp.status_code == 200 and
-            resp.headers.get('content-type', '').startswith('image')):
-        img = Image(url=url, name=os.path.basename(urlparse(resp.url).path))
-        img.cached_data = resp.content
-        return img
+    if resp.status_code != 200 or not is_image(resp):
+        return
+    img = Image(url=url, name=os.path.basename(urlparse(resp.url).path))
+    img.cached_data = resp.content
+    return img
 
 
-def get_yfrog(page_url, o):
-    page_url_2 = 'http://twitter.yfrog.com/z' + o.path
-    resp = requests.get(page_url_2)
+def get_yfrog(original_url, o):
+    page_url = 'http://twitter.yfrog.com/z' + o.path
+    resp = requests.get(page_url)
     if resp.status_code != 200:
         return
     url = pq(resp.text).find('#the-image img').attr('src')
@@ -743,7 +743,6 @@ class Api(ApiBase):
         return self._IterMessages(r, delimited)
 
     def _IterMessages(self, resp, delimited):
-        enc = 'utf-8'
         buf = bytearray()
         delimiter = b'\r\n'
         delimiter_length = len(delimiter)
