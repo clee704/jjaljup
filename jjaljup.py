@@ -93,7 +93,12 @@ class Image(Base):
     tweet_id = Column(Integer, ForeignKey('tweet.id', ondelete='CASCADE'),
                       nullable=False, index=True)
     url = Column(String, nullable=False)
-    local_path = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+
+    def __init__(self, url=None, name=None):
+        self.url = url
+        self.name = name
+        self.cached_data = None
 
     def __repr__(self):
         return '<Image(url={0!r})>'.format(self.url)
@@ -553,31 +558,33 @@ def save_tweet(session, directory, user_id, tweet_data):
             session.execute(favorite_table.insert().values(
                 user_id=user_id, tweet_id=tweet.id))
     debug_timer_end('save_tweet_1')
-    old_image_urls = set([img.url for img in tweet.images])
-    new_image_urls = extract_image_urls(tweet_data)
+    images = extract_images(tweet_data)
     debug_timer_start('save_tweet_2')
     with session.begin():
-        tweet.images[:] = (img for img in tweet.images
-                           if img.url not in old_image_urls - new_image_urls)
-        for url in new_image_urls - old_image_urls:
-            local_path = '{0}_{1}'.format(tweet.id, os.path.basename(url))
-            o = urlparse(url)
-            if o.netloc == 'pbs.twimg.com' and 'tweet_video' not in url:
-                url = url + ':orig'
-            tweet.images.append(Image(url=url, local_path=local_path))
+        tweet.images[:] = images
     debug_timer_end('save_tweet_2')
     num_images = 0
     for img in tweet.images:
-        path = os.path.join(directory, img.local_path.encode(PATH_ENCODING))
+        path = os.path.join(
+            directory,
+            u'{0}_{1}'.format(tweet.id, img.name).encode(PATH_ENCODING))
         if os.path.exists(path):
             num_images += 1
         else:
-            resp = requests.get(img.url)
-            if resp.status_code != 200:
-                secho(u'Got status code {0} from {1}'.format(resp.status_code,
-                                                             img.url))
-                continue
-            image_data = resp.content
+            image_data = img.cached_data
+            del img.cached_data
+            if not image_data:
+                resp = requests.get(img.url)
+                image_data = resp.content
+                error = u''
+                if resp.status_code != 200:
+                    error = u'Got status code {0} from {1}'.format(
+                        resp.status_code, img.url)
+                elif not image_data:
+                    error = u'Got empty response from {0}'.format(img.url)
+                if error:
+                    secho(error, fg='red', file=sys.stderr)
+                    continue
             try:
                 with open(path, 'wb') as f:
                     f.write(image_data)
@@ -592,8 +599,9 @@ def delete_tweet(session, directory, user, tweet):
     debug_timer_start('delete_tweet')
     with session.begin():
         for img in tweet.images:
-            path = os.path.join(directory,
-                                img.local_path.encode(PATH_ENCODING))
+            path = os.path.join(
+                directory,
+                u'{0}_{1}'.format(tweet.id, img.name).encode(PATH_ENCODING))
             if os.path.exists(path):
                 try:
                     os.unlink(path)
@@ -614,27 +622,42 @@ def is_image(resp):
     return resp.headers.get('content-type', '').startswith('image')
 
 
-def extract_image_urls(tweet_data):
-    image_urls = set()
+def extract_images(tweet_data):
+    images = []
+    image_urls = []
     for media in tweet_data.media:
         if media.get('type') == 'photo':
             url = media.get('media_url_https', media.get('media_url'))
             if url:
-                image_urls.add(url)
+                image_urls.append(url)
     for url_data in tweet_data.urls:
         url = url_data.expanded_url
         if not url:
             continue
+        o = urlparse(url)
         if is_image_url(url):
-            image_urls.add(url)
-        elif re.match(r'https?://twitter.com/.*/photo/\d+', url):
-            mp4_url = extract_twitter_agif(url)
-            if mp4_url:
-                image_urls.add(mp4_url)
-    return image_urls
+            image_urls.append(url)
+        elif o.netloc == 'twitter.com' and re.match(r'/.*/photo/\d+', o.path):
+            img = get_twitter_agif(url, o)
+            if img:
+                images.append(img)
+        elif o.netloc == 'twitpic.com':
+            img = get_twitpic(url, o)
+            if img:
+                images.append(img)
+    for url in image_urls:
+        name = os.path.basename(url)
+        o = urlparse(url)
+        if o.netloc == 'pbs.twimg.com' and 'tweet_video' not in url:
+            url = url + ':orig'
+        images.append(Image(url=url, name=name))
+    for img in images:
+        if not img.name:
+            img.name = os.path.basename(img.url)
+    return images
 
 
-def extract_twitter_agif(url):
+def get_twitter_agif(url, o):
     resp = requests.get(url)
     if resp.status_code == 404:
         return
@@ -643,7 +666,18 @@ def extract_twitter_agif(url):
         parser.feed(resp.text)
     except HTMLParseError:
         return
-    return parser.url
+    if parser.url:
+        return Image(url=parser.url)
+
+
+def get_twitpic(url, o):
+    url = 'http://twitpic.com/show/full' + o.path
+    resp = requests.get(url)
+    if (resp.status_code == 200 and
+            resp.headers.get('content-type', '').startswith('image')):
+        img = Image(url=url, name=os.path.basename(urlparse(resp.url).path))
+        img.cached_data = resp.content
+        return img
 
 
 class TwitterAnimatedGifExtracter(HTMLParser):
