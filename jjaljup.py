@@ -338,11 +338,14 @@ def sync(state, account, directory, count, delete, workers):
             print(('Rate limit exceeded. '
                    'Waiting for the next round at {0}.').format(reset_dt))
             time.sleep(max(1, reset - time.time() + 10))
-        for _ in range(workers):
-            input_queue.put(None)  # Stop workers.
+
         secho(b'Synchronized {0} images in {1} tweets into {2}'.format(
             num_saved_images, num_saved_tweets, directory))
     finally:
+        # Stop workers
+        for _ in range(workers):
+            input_queue.put(None)
+
         if tweet_ids and delete:
             min_id = min(tweet_ids)
             num_deleted_tweets = 0
