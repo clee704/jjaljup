@@ -685,6 +685,7 @@ twitter.Status = Status
 #  2. Bugs in Streaming API where responses are slopily parsed (newline should
 #     be \r\n instead of \n and should return a message as soon as it is
 #     received) and delimited=length is not handled at all are resolved.
+# TODO create a pull request to bear/python-twitter
 class Api(ApiBase):
 
     def GetUserStream(self, replies='all', withuser='user', track=None,
@@ -709,44 +710,52 @@ class Api(ApiBase):
             data['stall_warning'] = str(stall_warning)
         url = 'https://userstream.twitter.com/1.1/user.json'
         r = self._RequestStream(url, 'POST', data=data)
+
+        # Streaming API returns 420 instead of 429, unlike other 1.1 APIs.
+        if r.status_code == 420 or r.status_code == 429:
+            raise TwitterError(r.read())
+
         return self._IterMessages(r, delimited)
 
     def _IterMessages(self, resp, delimited):
         enc = 'utf-8'
         buf = bytearray()
-        for chunk in resp.iter_content(1):
-            chunk_bytes = chunk.encode(enc)
-            # chunk_bytes can contain more than one character because:
-            #  1. It is UTF-8 encoded
-            #  2. Decompressed from gzip data if Content-Encoding is gzip
-            buf.extend(chunk_bytes)
-            suffix_length = len(chunk_bytes) + (1 if buf else 0)
+        delimiter = b'\r\n'
+        delimiter_length = len(delimiter)
+        while True:
+            chunk = resp.raw.read(resp.raw._fp.chunk_left or 1,
+                                  decode_content=True)
+            if not chunk:
+                continue
+            suffix_length = len(chunk) + (delimiter_length - 1 if buf else 0)
+            buf.extend(chunk)
             suffix = buf[-suffix_length:]
-            i = suffix.find(b'\r\n')
-            if i != -1:
-                j = len(buf) - (suffix_length - i)
-                line = ''.join(memoryview(buf)[:j])
-                buf[:] = buf[j + 2:]
-            else:
-                continue
-            if not line:
-                continue
-            if line == 'Exceeded connection limit for user':
-                raise TwitterError('Exceeded connection limit for user')
+            i = -delimiter_length
+            while True:
+                i = suffix.find(delimiter, i + delimiter_length)
+                if i == -1:
+                    break
+                j = len(buf) - suffix_length + i
+                line = bytes(buf[:j])
+                del buf[:j + delimiter_length]
 
-            # delimited=length is useless when content-encoding is gzip.
-            # How can we read N "decompressed" characters from a compressed
-            # stream? Here we ignore length lines.
-            if delimited == 'length':
-                try:
-                    message_length = int(line)
+                if not line:
                     continue
-                except ValueError:
-                    pass
 
-            if line:
-                data = self._ParseAndCheckTwitter(line)
-                yield data
+                # delimited=length is useless when chunked transfer encoding
+                # is in use. If it's not, it still can't benefit from knowing
+                # the length of the next message if the stream is compressed.
+                # Here we just effectively ignore delimited=length.
+                if delimited == 'length':
+                    try:
+                        message_length = int(line)
+                        continue
+                    except ValueError:
+                        pass
+
+                if line:
+                    data = self._ParseAndCheckTwitter(line)
+                    yield data
 
 twitter.Api = Api
 
