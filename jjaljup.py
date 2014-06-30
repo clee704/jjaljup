@@ -311,15 +311,13 @@ def sync(state, account, directory, count, delete, workers):
                     while not output_queue.empty():
                         num_saved_images += output_queue.get_nowait()
                     max_id = tweets[-1].id - 1 if tweets else 0
+                    print('There are no more tweets. ' if len(tweets) == 0 else
+                        '{0} tweets have been processed. '.format(
+                            num_saved_tweets), end='')
+                    print_api_status()
                     last = len(tweets) == 0 or num_saved_tweets >= count
                     if last:
-                        if count == INFINITY:
-                            print('There are no more tweets. ', end='')
-                            print_api_status()
                         break
-                    print('{0} tweets have been processed. '.format(
-                        num_saved_tweets), end='')
-                    print_api_status()
             except TwitterError as e:
                 if not is_rate_limited(e):
                     raise_unexpected_error(e)
