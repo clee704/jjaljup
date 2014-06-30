@@ -9,19 +9,18 @@ Azyu님의 [FavoImgs](https://github.com/azyu/FavoImgs/)를 보고 리눅스나 
 설치
 ----
 
-설치는 [GitHub 저장소](https://github.com/clee704/jjaljup/)에서 `jjaljup.py` 파일을
-다운받거나, pip를 이용하여 설치할 수 있습니다 (권장).
+짤줍은 [Python](https://www.python.org/download/) 2.6, 2.7 버전에서 돌아갑니다.
+짤줍의 설치는 다음과 같이 [pip](http://pip.readthedocs.org/en/latest/installing.html)를
+이용하는 것을 권장합니다.
 
     $ pip install jjaljup
 
-파일을 직접 다운 받은 경우 다음 명령으로 파일을 실행 가능하도록 만들어야 합니다.
+설치가 완료되면 `jjaljup` (Windows의 경우 `jjaljup.exe`)을 커맨드라인에 입력하면 실행할 수
+있습니다.
 
-    $ chmod +x jjaljup.py
-    $ ./jjaljup.py --help
-
-이 경우는 짤줍이 의존하는 패키지들도 직접 설치해야 합니다. 목록은 `requirements.txt` 파일을 보면
-됩니다. 여러가지로 귀찮기 때문에 그냥 pip로 설치하는 것을 권장합니다. pip로 설치한 경우
-`jjaljup`이라고 입력하면 커맨드를 실행할 수 있습니다.
+    $ jjaljup
+    Usage: jjaljup [OPTIONS] COMMAND [ARGS]...
+    ...
 
 
 사용방법
@@ -43,21 +42,18 @@ Azyu님의 [FavoImgs](https://github.com/azyu/FavoImgs/)를 보고 리눅스나 
 자세한 내용은 [SQLAlchemy 문서](http://docs.sqlalchemy.org/en/rel_0_9/core/engines.html#database-urls)를
 참조하세요.
 
-옵션 등에 대해 알고 싶은 경우 커맨드를 입력한 후 `--help`를 덧붙이면 설명이 나옵니다.
-
-    $ jjaljup --help
-    Usage: jjaljup [OPTIONS] COMMAND [ARGS]...
-    ...    
-    $ jjaljup sync --help
-    Usage: jjaljup sync [OPTIONS]
-    ...
-
 `jjaljup sync`를 실행하면 선택된 계정의 모든 관심글에 있는 그림 파일을 다운로드 합니다.
 짤줍은 그림이 트위터에서 직접 올라간 경우, 외부 URL이 그림 파일 확장자로 끝나는 경우에만 파일을
 다운로드 합니다.
 
 `jjaljup watch`를 실행하면 커맨드가 실행되는 동안 선택된 계정의 활동을 실시간으로 감시하면서
 관심글을 담을 때마다 그림 파일을 다운로드합니다.
+
+보다 자세한 설명은 커맨드를 입력한 후 `--help`를 덧붙이면 볼 수 있습니다 (간단한 영어).
+
+    $ jjaljup sync --help
+    Usage: jjaljup sync [OPTIONS]
+    ...
 
 
 주의사항
@@ -72,5 +68,6 @@ API keys" 버튼을 눌러 키를 재생성하면 피해를 막을 수 있습니
 나중에 추가될 수도 있는 기능
 ----------------------------
 
-* Twitpic, imgur 등 서드 파티 외부 이미지 사이트 지원.
+* 서드 파티 이미지/비디오 사이트 추가 지원: imgur, Vine 등.
 * 리스트, 커스텀 타임라인 지원. 단, 커스텀 타임라인은 아직 공식 API가 없음 (베타 상태).
+* 다른 사람의 관심글 저장하기.
