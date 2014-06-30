@@ -8,6 +8,7 @@ import pprint
 import Queue
 import re
 import sys
+import threading
 import time
 import webbrowser
 from datetime import datetime
@@ -145,7 +146,7 @@ def session_option(f):
         Session.configure(bind=engine)
         Base.metadata.create_all(engine)
         state = ctx.ensure_object(State)
-        state.session = Session()
+        state.session = Session(autocommit=True)
         return state
     return click.option('--database-uri', metavar='URI',
                         envvar='JJALJUP_DATABASE_URI',
@@ -343,7 +344,6 @@ def sync(state, account, directory, count, delete, workers):
                 num_deleted_tweets += 1
                 num_deleted_images += len(tweet.images)
                 delete_tweet(state.session, directory, user, tweet)
-            state.session.commit()
             if num_deleted_tweets > 0:
                 print('Deleted {0} images in {1} unfavorited tweets.'.format(
                     num_deleted_images, num_deleted_tweets))
@@ -407,7 +407,6 @@ def watch(state, account, directory, delete):
                     secho(('{0} images are deleted from an unfavorited '
                            'tweet: ').format(num_images), fg=color, nl=False)
                     print(td.text.replace('\n', ' '))
-                session.commit()
     except TwitterError as e:
         if is_rate_limited(e):
             secho('Exceeded connection limit for user. '
@@ -453,18 +452,21 @@ def add_user(session, client_key, client_secret):
                       access_token_key=oauth_token,
                       access_token_secret=oauth_token_secret)
     info = api.VerifyCredentials()
-    user = session.query(User).get(info.id)
-    if not user:
-        user = User(id=info.id, name=info.name, screen_name=info.screen_name,
-                    oauth_token=oauth_token,
-                    oauth_token_secret=oauth_token_secret)
-        session.add(user)
-    else:
-        user.name = info.name
-        user.screen_name = info.screen_name
-        user.oauth_token = oauth_token
-        user.oauth_token_secret = oauth_token_secret
-    session.commit()
+    debug_timer_start('add_user')
+    with session.begin():
+        user = session.query(User).get(info.id)
+        if not user:
+            user = User(id=info.id, name=info.name,
+                        screen_name=info.screen_name,
+                        oauth_token=oauth_token,
+                        oauth_token_secret=oauth_token_secret)
+            session.add(user)
+        else:
+            user.name = info.name
+            user.screen_name = info.screen_name
+            user.oauth_token = oauth_token
+            user.oauth_token_secret = oauth_token_secret
+    debug_timer_end('add_user')
     print(u'Added {0} (@{1}).'.format(user.name, user.screen_name))
     return user
 
@@ -519,7 +521,7 @@ def raise_unexpected_error(e):
 
 
 def save_tweet_mt(directory, user_id, tweets_queue, num_images_queue):
-    session = Session()
+    session = Session(autocommit=True)
     while True:
         try:
             tweet_data = tweets_queue.get_nowait()
@@ -528,35 +530,38 @@ def save_tweet_mt(directory, user_id, tweets_queue, num_images_queue):
         try:
             num_images = save_tweet(session, directory, user_id, tweet_data)
             num_images_queue.put(num_images)
-            session.commit()
         except Exception:
             logger.exception('Unexpected error occurred while saving a tweet.')
             logger.debug('The tweet was: %s',
                          pprint.pformat(tweet_data.AsDict()))
-            session.rollback()
         finally:
             tweets_queue.task_done()
 
 
 def save_tweet(session, directory, user_id, tweet_data):
-    tweet = session.query(Tweet).get(tweet_data.id)
-    if tweet is None:
-        tweet = Tweet(id=tweet_data.id)
-        session.add(tweet)
-    if tweet.favorited_users.filter_by(id=user_id).count() == 0:
-        session.execute(favorite_table.insert().values(
-            user_id=user_id, tweet_id=tweet.id))
+    debug_timer_start('save_tweet_1')
+    with session.begin():
+        tweet = session.query(Tweet).get(tweet_data.id)
+        if tweet is None:
+            tweet = Tweet(id=tweet_data.id)
+            session.add(tweet)
+        if tweet.favorited_users.filter_by(id=user_id).count() == 0:
+            session.execute(favorite_table.insert().values(
+                user_id=user_id, tweet_id=tweet.id))
+    debug_timer_end('save_tweet_1')
     old_image_urls = set([img.url for img in tweet.images])
     new_image_urls = extract_image_urls(tweet_data)
-    tweet.images[:] = (img for img in tweet.images
-                       if img.url not in old_image_urls -
-                                         new_image_urls)
-    for url in new_image_urls - old_image_urls:
-        local_path = '{0}_{1}'.format(tweet.id, os.path.basename(url))
-        o = urlparse(url)
-        if o.netloc == 'pbs.twimg.com' and 'tweet_video' not in url:
-            url = url + ':orig'
-        tweet.images.append(Image(url=url, local_path=local_path))
+    debug_timer_start('save_tweet_2')
+    with session.begin():
+        tweet.images[:] = (img for img in tweet.images
+                           if img.url not in old_image_urls - new_image_urls)
+        for url in new_image_urls - old_image_urls:
+            local_path = '{0}_{1}'.format(tweet.id, os.path.basename(url))
+            o = urlparse(url)
+            if o.netloc == 'pbs.twimg.com' and 'tweet_video' not in url:
+                url = url + ':orig'
+            tweet.images.append(Image(url=url, local_path=local_path))
+    debug_timer_end('save_tweet_2')
     num_images = 0
     for img in tweet.images:
         path = os.path.join(directory,
@@ -581,17 +586,21 @@ def save_tweet(session, directory, user_id, tweet_data):
 
 
 def delete_tweet(session, directory, user, tweet):
-    for img in tweet.images:
-        path = os.path.join(directory, img.local_path.encode(PATH_ENCODING))
-        if os.path.exists(path):
-            try:
-                os.unlink(path)
-            except OSError as e:
-                secho(u'Failed to delete the image at {0}: {1}'.format(
-                    path, e.strerror), fg='red', file=sys.stderr)
-    user.favorites.remove(tweet)
-    if tweet.favorited_users.count() == 0:
-        session.delete(tweet)
+    debug_timer_start('delete_tweet')
+    with session.begin():
+        for img in tweet.images:
+            path = os.path.join(directory,
+                                img.local_path.encode(PATH_ENCODING))
+            if os.path.exists(path):
+                try:
+                    os.unlink(path)
+                except OSError as e:
+                    secho(u'Failed to delete the image at {0}: {1}'.format(
+                        path, e.strerror), fg='red', file=sys.stderr)
+        user.favorites.remove(tweet)
+        if tweet.favorited_users.count() == 0:
+            session.delete(tweet)
+    debug_timer_end('delete_tweet')
 
 
 def is_image_url(url):
@@ -736,6 +745,20 @@ class Api(ApiBase):
 
 
 twitter.Api = Api
+
+
+_debug_timers = {}
+
+
+def debug_timer_start(name):
+    key = '{0} {1}'.format(threading.current_thread().name, name)
+    _debug_timers[key] = time.time()
+
+
+def debug_timer_end(name):
+    key = '{0} {1}'.format(threading.current_thread().name, name)
+    t = time.time() - _debug_timers.pop(key)
+    logger.debug('Transaction time for %s: %.06f', key, t)
 
 
 def main():
