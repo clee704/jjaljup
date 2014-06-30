@@ -283,6 +283,13 @@ def sync(state, account, directory, count, delete, workers):
     tweet_ids = set()
     num_saved_tweets = 0
     num_saved_images = 0
+    input_queue = Queue.Queue()
+    output_queue = Queue.Queue()
+    for _ in range(workers):
+        t = Thread(target=save_tweet_mt,
+                   args=(directory, user.id, input_queue, output_queue))
+        t.daemon = True
+        t.start()
     try:
         last = False
         while not last:
@@ -298,21 +305,18 @@ def sync(state, account, directory, count, delete, workers):
                 while remaining > 0:
                     tweets = api.GetFavorites(count=CALL_SIZE, max_id=max_id)
                     remaining -= 1
-                    input_queue = Queue.Queue()
                     for tweet in tweets:
                         input_queue.put(tweet)
                         tweet_ids.add(tweet.id)
                         num_saved_tweets += 1
                         if num_saved_tweets >= count:
                             break
-                    output_queue = Queue.Queue()
-                    for _ in range(workers):
-                        Thread(target=save_tweet_mt,
-                               args=(directory, user.id, input_queue,
-                                     output_queue)).start()
                     input_queue.join()
-                    while not output_queue.empty():
-                        num_saved_images += output_queue.get_nowait()
+                    while True:
+                        try:
+                            num_saved_images += output_queue.get_nowait()
+                        except Queue.Empty:
+                            break
                     max_id = tweets[-1].id - 1 if tweets else 0
                     print('There are no more tweets. ' if len(tweets) == 0 else
                           '{0} tweets have been processed. '.format(
@@ -523,10 +527,7 @@ def raise_unexpected_error(e):
 def save_tweet_mt(directory, user_id, tweets_queue, num_images_queue):
     session = Session(autocommit=True)
     while True:
-        try:
-            tweet_data = tweets_queue.get_nowait()
-        except Queue.Empty:
-            break
+        tweet_data = tweets_queue.get()
         try:
             num_images = save_tweet(session, directory, user_id, tweet_data)
             num_images_queue.put(num_images)
