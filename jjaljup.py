@@ -403,9 +403,15 @@ def watch(state, account, directory, delete):
                     continue
                 td = twitter.Status.NewFromJsonDict(msg['target_object'])
                 if msg['event'] == 'favorite':
-                    # FIXME extended_entities are missing. Is it a bug in the
-                    # Twitter Streaming API?
+                    # FIXME extended_entities are missing in tweets from
+                    # Streaming API. Is it a bug in the API?
                     # See https://dev.twitter.com/issues/1724
+                    try:
+                        td = api.GetStatus(td.id)
+                    except TwitterError as e:
+                        if is_rate_limited(e):
+                            secho('Keep calm and take a rest.', fg='red',
+                                  file=sys.stderr)
                     num_images = save_tweet(session, directory, user.id, td)
                     color = 'green' if num_images else 'yellow'
                     secho(('{0} images are saved from a favorited '
