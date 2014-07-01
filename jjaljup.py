@@ -34,7 +34,7 @@ from twitter import TwitterError
 from unidecode import unidecode
 from werkzeug.utils import secure_filename
 
-__version__ = '0.0.6'
+__version__ = '0.0.7'
 
 logger = logging.getLogger(__name__)
 
