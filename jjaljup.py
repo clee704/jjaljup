@@ -175,7 +175,11 @@ def cli(debug):
     them automatically.
 
     """
-    logging.basicConfig(level=logging.DEBUG if debug else logging.WARN)
+    if debug:
+        logging.basicConfig(level=logging.DEBUG)
+        logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
+    else:
+        logging.basicConfig(level=logging.WARN)
 
 
 @cli.command(short_help='Start a Python interpreter to debug.')
