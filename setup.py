@@ -14,7 +14,7 @@ def readme():
 
 setup(
     name='jjaljup',
-    version='0.0.5',
+    version='0.0.6',
     url='https://github.com/clee704/jjaljup',
     license='MIT',
     author='Choongmin Lee',
