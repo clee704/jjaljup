@@ -24,6 +24,7 @@ setup(
     py_modules=['jjaljup'],
     install_requires=[
         'SQLAlchemy==0.9.6',
+        'Unidecode==0.04.16',
         'click==2.2',
         'colorama==0.3.1',
         'pyquery==1.2.8',
@@ -31,6 +32,7 @@ setup(
         'python-twitter==1.3.1',
         'requests==2.3.0',
         'requests-oauthlib==0.4.1',
+        'werkzeug==0.9.6',
     ],
     entry_points={
         'console_scripts': [

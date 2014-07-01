@@ -31,6 +31,8 @@ from sqlalchemy.orm import relationship, sessionmaker
 from twitter import Api as ApiBase
 from twitter import Status as StatusBase
 from twitter import TwitterError
+from unidecode import unidecode
+from werkzeug.utils import secure_filename
 
 __version__ = '0.0.6'
 
@@ -42,8 +44,6 @@ REQUEST_TOKEN_URL = 'https://api.twitter.com/oauth/request_token'
 AUTHORIZATION_URL = 'https://api.twitter.com/oauth/authorize'
 ACCESS_TOKEN_URL = 'https://api.twitter.com/oauth/access_token'
 RATE_LIMIT_EXCEEDED = 88
-
-PATH_ENCODING = sys.getfilesystemencoding()
 
 Base = declarative_base()
 Session = sessionmaker()
@@ -100,6 +100,11 @@ class Image(Base):
         self.url = url
         self.name = name
         self.cached_data = None
+
+    def get_path(self, directory):
+        bname = secure_filename(unidecode(u'{0}_{1}'.format(self.tweet_id,
+                                                            self.name)))
+        return os.path.join(directory, bname)
 
     def __repr__(self):
         return '<Image(url={0!r})>'.format(self.url)
@@ -575,9 +580,7 @@ def save_tweet(session, directory, user_id, tweet_data):
     debug_timer_end('save_tweet_2')
     num_images = 0
     for img in tweet.images:
-        path = os.path.join(
-            directory,
-            u'{0}_{1}'.format(tweet.id, img.name).encode(PATH_ENCODING))
+        path = img.get_path(directory)
         if os.path.exists(path):
             num_images += 1
         else:
@@ -607,9 +610,7 @@ def save_tweet(session, directory, user_id, tweet_data):
 
 def delete_tweet(session, directory, user, tweet):
     for img in tweet.images:
-        path = os.path.join(
-            directory,
-            u'{0}_{1}'.format(tweet.id, img.name).encode(PATH_ENCODING))
+        path = img.get_path(directory)
         if os.path.exists(path):
             try:
                 os.unlink(path)
