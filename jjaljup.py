@@ -2,11 +2,13 @@
 from __future__ import print_function
 
 import code
+import itertools
 import logging
 import os
 import pprint
 import Queue
 import re
+import string
 import sys
 import threading
 import time
@@ -230,7 +232,7 @@ def accounts(state):
     if not users:
         print('No accounts.')
     else:
-        print('Accounts: {0}'.format(len(users)))
+        print(plformat('There {|is/are} {0} {|account(s)}:', len(users)))
         for i, user in enumerate(users, 1):
             secho(u' {0}. {1} (@{2})'.format(i, user.name, user.screen_name))
 
@@ -288,10 +290,10 @@ def sync(state, account, directory, count, delete, workers):
     if num_favorites is not None:
         eta_min = max(1, int(min(count, num_favorites) / CALL_SIZE))
         eta_max = max(10, int(min(count, num_favorites) / CALL_SIZE * 2))
-        print('You have {0} favorite tweets.'.format(num_favorites))
+        print(plformat('You have {0} favorite {|tweet(s)}.', num_favorites))
         if count != INFINITY:
-            print('Only the most recent {0} tweets will be examined.'.format(
-                count))
+            print(plformat('Only the most recent {0} {|tweet(s)} will be '
+                           'examined.', count))
         print('It may take {0}-{1} minutes to complete.'.format(eta_min,
                                                                 eta_max))
 
@@ -334,8 +336,8 @@ def sync(state, account, directory, count, delete, workers):
                             break
                     max_id = tweets[-1].id - 1 if tweets else 0
                     print('There are no more tweets. ' if len(tweets) == 0 else
-                          '{0} tweets have been processed. '.format(
-                          num_saved_tweets), end='')
+                          plformat('{0} {|tweet(s)} {|has/have} been '
+                                   'processed. ', num_saved_tweets), end='')
                     print_api_status()
                     last = len(tweets) == 0 or num_saved_tweets >= count
                     if last:
@@ -350,8 +352,9 @@ def sync(state, account, directory, count, delete, workers):
                    'Waiting for the next round at {0}.').format(reset_dt))
             time.sleep(max(1, reset - time.time() + 10))
 
-        secho(b'Synchronized {0} images in {1} tweets into {2}'.format(
-            num_saved_images, num_saved_tweets, directory))
+        secho(plformat(b'Synchronized {0} {0|image(s)} in {1} {1|tweet(s)} '
+                       b'into {2}', num_saved_images, num_saved_tweets,
+                       directory))
     finally:
         # Stop workers
         for _ in range(workers):
@@ -369,8 +372,9 @@ def sync(state, account, directory, count, delete, workers):
                 num_deleted_images += len(tweet.images)
                 delete_tweet(state.session, directory, user, tweet)
             if num_deleted_tweets > 0:
-                print('Deleted {0} images in {1} unfavorited tweets.'.format(
-                    num_deleted_images, num_deleted_tweets))
+                print(plformat('Deleted {0} {0|image(s)} in {1} unfavorited '
+                               '{1|tweet(s)}.', num_deleted_images,
+                               num_deleted_tweets))
 
 
 @cli.command(short_help='Monitor account activity and download new images.')
@@ -425,8 +429,8 @@ def watch(state, account, directory, delete):
                                   file=sys.stderr)
                     num_images = save_tweet(session, directory, user.id, td)
                     color = 'green' if num_images else 'yellow'
-                    secho(('{0} images are saved from a favorited '
-                           'tweet: ').format(num_images), fg=color, nl=False)
+                    secho(plformat('{0} {|image(s)} are saved from a favorited '
+                                   'tweet: ', num_images), fg=color, nl=False)
                     secho(td.text.replace(u'\n', u' '))
                 elif msg['event'] == 'unfavorite' and delete:
                     tweet = user.favorites.filter(Tweet.id == td.id).scalar()
@@ -435,8 +439,9 @@ def watch(state, account, directory, delete):
                     num_images = len(tweet.images)
                     delete_tweet(session, directory, user, tweet)
                     color = 'red' if num_images else 'yellow'
-                    secho(('{0} images are deleted from an unfavorited '
-                           'tweet: ').format(num_images), fg=color, nl=False)
+                    secho(plformat('{0} {|image(s)} are deleted from an '
+                                   'unfavorited tweet: ', num_images),
+                          fg=color, nl=False)
                     secho(td.text.replace(u'\n', u' '))
     except TwitterError as e:
         if is_rate_limited(e):
@@ -795,6 +800,57 @@ class Api(ApiBase):
                     yield data
 
 twitter.Api = Api
+
+
+class PluralFormatter(string.Formatter):
+
+    def get_value(self, key, args, kwargs):
+        if isinstance(key, (int, long)):
+            return args[key]
+        if key in kwargs:
+            return kwargs[key]
+        if '|' in key:
+            k, choices = self._decode_field(key)
+            if k == '':
+                value = self._get_one_number(args, kwargs)
+            else:
+                value = args[k] if isinstance(k, (int, long)) else kwargs[k]
+            return choices[0] if value == 1 else choices[1]
+
+    def _decode_field(self, key):
+        k, choices_str = key.split('|')
+        try:
+            k = int(k)
+        except ValueError:
+            pass
+        choices = self._decode_choices(choices_str)
+        return k, choices
+
+    def _decode_choices(self, choices_str):
+        if '/' in choices_str:
+            return choices_str.split('/')
+        if '(' in choices_str and choices_str.endswith(')'):
+            x = choices_str.split('(')
+            return x[0], x[0] + x[1][:-1]
+        raise RuntimeError('invalid spec: {0!r}'.format(choices_str))
+
+    def _get_one_number(self, args, kwargs):
+        value = None
+        number_types = (int, long, float, complex)
+        for v in itertools.chain(args, kwargs.itervalues()):
+            if isinstance(v, number_types):
+                if value is None:
+                    value = v
+                else:
+                    raise RuntimeError('more than one number in arguments')
+        return value
+
+
+_plural_formatter = PluralFormatter()
+
+
+def plformat(format_str, *args, **kwargs):
+    return _plural_formatter.vformat(format_str, args, kwargs)
 
 
 _debug_timers = {}

@@ -1,7 +1,7 @@
 from urlparse import urlparse
 
 import pytest
-from jjaljup import favorite_table, Image, Tweet, User
+from jjaljup import favorite_table, Image, plformat, Tweet, User
 
 
 def test_models(session):
@@ -62,3 +62,31 @@ def test_models(session):
 
     # FIXME if we can make the database delete tw_a automatically...
     assert tw_a.favorited_users.all() == []
+
+
+@pytest.mark.parametrize('format_str, args, kwargs, formatted', [
+    ('{0}', (1,), {}, '1'),
+    ('{name}', (), {'name': 'john'}, 'john'),
+    ('{0:.2f} {{}} {1!r} {a[0]}', (1.238, '\n'), {'a': [10, 11]},
+     '1.24 {} \'\\n\' 10'),
+    ('{0:.^11}', ('foo',), {}, '....foo....'),
+    ('{0} {0|apple(s)}', (0,), {}, '0 apples'),
+    ('{0} {0|apple(s)}', (1,), {}, '1 apple'),
+    ('{0} {0|apple(s)}', (2,), {}, '2 apples'),
+    ('{n} {n|apple(s)}', (), {'n': 3}, '3 apples'),
+    ('{0} {0|apple(s)} of {1} {1|person/people}', (4, 0), {},
+     '4 apples of 0 people'),
+    ('{0} {0|apple(s)} of {1} {1|person/people}', (4, 1), {},
+     '4 apples of 1 person'),
+    ('{0} {0|apple(s)} of {1} {1|person/people}', (4, 2), {},
+     '4 apples of 2 people'),
+    ('There {|is/are} {num_apples} {|apple(s)}', (), {'num_apples': 3},
+     'There are 3 apples'),
+])
+def test_plformat(format_str, args, kwargs, formatted):
+    assert plformat(format_str, *args, **kwargs) == formatted
+
+
+def test_plformat_ambiguous():
+    with pytest.raises(RuntimeError):
+        plformat('{0} {|apple(s)} in {1} {|basket(s)}', 1, 2)
