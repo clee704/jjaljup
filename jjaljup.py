@@ -625,7 +625,7 @@ def extract_images(tweet_data):
     image_urls = []
     for media in tweet_data.media:
         if media.get('type') == 'photo':
-            url = media.get('media_url_https', media.get('media_url'))
+            url = media.get('media_url')
             if url:
                 image_urls.append(url)
     for url_data in tweet_data.urls:
