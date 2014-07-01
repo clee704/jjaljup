@@ -243,13 +243,13 @@ def accounts(state):
                                            resolve_path=True),
               help='Select a local directory to sync. If the path does not '
                    'exist, new directories will be created as necessary.')
-@click.option('--count', metavar='N', type=int,
+@click.option('--count', metavar='N', type=click.IntRange(1),
               help='Number of favorite tweets to sync. If set, only the most '
                    'recent N tweets are examined.')
 @click.option('--delete', is_flag=True, default=False,
               help='Delete unfavorited tweets and images from the directory. '
                    'Disabled by default.')
-@click.option('--workers', metavar='N', type=int, default=8,
+@click.option('--workers', metavar='N', type=click.IntRange(1), default=8,
               help='Number of threads to run concurrently (defaults to 8).')
 @session_option
 @client_credentials_option
@@ -264,7 +264,7 @@ def sync(state, account, directory, count, delete, workers):
     """
     CALL_SIZE = 200
     INFINITY = float('inf')
-    if not count:
+    if count is None:
         count = INFINITY
 
     if not os.path.exists(directory):
