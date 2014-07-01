@@ -222,7 +222,7 @@ def accounts(state):
     else:
         print('Accounts: {0}'.format(len(users)))
         for i, user in enumerate(users, 1):
-            print(u' {0}. {1} (@{2})'.format(i, user.name, user.screen_name))
+            secho(u' {0}. {1} (@{2})'.format(i, user.name, user.screen_name))
 
 
 @cli.command(short_help='Download images in favorite tweets.')
@@ -416,7 +416,7 @@ def watch(state, account, directory, delete):
                     color = 'green' if num_images else 'yellow'
                     secho(('{0} images are saved from a favorited '
                            'tweet: ').format(num_images), fg=color, nl=False)
-                    print(td.text.replace('\n', ' '))
+                    secho(td.text.replace(u'\n', u' '))
                 elif msg['event'] == 'unfavorite' and delete:
                     tweet = user.favorites.filter(Tweet.id == td.id).scalar()
                     if tweet is None:
@@ -426,7 +426,7 @@ def watch(state, account, directory, delete):
                     color = 'red' if num_images else 'yellow'
                     secho(('{0} images are deleted from an unfavorited '
                            'tweet: ').format(num_images), fg=color, nl=False)
-                    print(td.text.replace('\n', ' '))
+                    secho(td.text.replace(u'\n', u' '))
     except TwitterError as e:
         if is_rate_limited(e):
             secho('Exceeded connection limit for user. '
@@ -454,7 +454,7 @@ def select_user(session, client_key, client_secret, screen_name=None):
         n = len(users) + 1
         secho('Choose a Twitter account to work with:', fg='blue')
         for i, u in enumerate(users, 1):
-            print(u' {0}. {1} (@{2})'.format(i, u.name, u.screen_name))
+            secho(u' {0}. {1} (@{2})'.format(i, u.name, u.screen_name))
         print(' {0}. Add a new account'.format(n))
         choice = click.prompt(click.style('Choice: ', fg='blue'),
                               type=click.IntRange(1, n), prompt_suffix='')
@@ -487,7 +487,7 @@ def add_user(session, client_key, client_secret):
             user.oauth_token = oauth_token
             user.oauth_token_secret = oauth_token_secret
     debug_timer_end('add_user')
-    print(u'Added {0} (@{1}).'.format(user.name, user.screen_name))
+    secho(u'Added {0} (@{1}).'.format(user.name, user.screen_name))
     return user
 
 
