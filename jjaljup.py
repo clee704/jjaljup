@@ -72,7 +72,7 @@ class User(Base):
     favorites = relationship('Tweet', secondary=favorite_table, lazy='dynamic')
 
     def __repr__(self):
-        return '<User @{o.screen_name}>'.format(o=self)
+        return '<User @{0.screen_name}>'.format(self)
 
 
 class Tweet(Base):
@@ -86,7 +86,7 @@ class Tweet(Base):
                                    lazy='dynamic')
 
     def __repr__(self):
-        return '<Tweet(id={o.id})>'.format(o=self)
+        return '<Tweet(id={0.id})>'.format(self)
 
 
 class Image(Base):
@@ -104,12 +104,12 @@ class Image(Base):
         self.cached_data = None
 
     def get_path(self, directory):
-        bname = secure_filename(unidecode(u'{0}_{1}'.format(self.tweet_id,
-                                                            self.name)))
+        bname_u = u'{0.tweet_id}_{0.name}'.format(self)
+        bname = secure_filename(unidecode(bname_u))
         return os.path.join(directory, bname)
 
     def __repr__(self):
-        return '<Image(url={o.url!r})>'.format(o=self)
+        return '<Image(url={0.url!r})>'.format(self)
 
 
 @event.listens_for(Engine, 'connect')
@@ -190,13 +190,13 @@ def cli(debug):
         logging.basicConfig(level=logging.WARN)
 
 
-@cli.command(short_help='Start a Python interpreter to debug.')
+@cli.command(short_help='Start a Python interpreter for debugging.')
 @session_option
 @client_credentials_option
 @pass_state
-def debug(state):
+def shell(state):
     """
-    Start a Python interpreter to debug. This command is intended for
+    Start a Python interpreter for debugging. This command is intended for
     developers.
 
     """
@@ -228,13 +228,12 @@ def add(state):
 @pass_state
 def accounts(state):
     """Show authorized accounts in the database."""
-    users = list_users(state.session)
+    users = state.session.query(User).order_by(User.id).all()
     if not users:
         print('No accounts.')
     else:
-        print(plformat('There {|is/are} {0} {|account(s)}:', len(users)))
-        for i, user in enumerate(users, 1):
-            secho(u' {0}. {1} (@{2})'.format(i, user.name, user.screen_name))
+        print(plformat('There {|is/are} {n} {|account(s)}:', n=len(users)))
+        print_users(users)
 
 
 @cli.command(short_help='Download images in favorite tweets.')
@@ -271,8 +270,8 @@ def sync(state, account, directory, count, delete, workers):
 
     if not os.path.exists(directory):
         os.makedirs(directory)
-        secho(b'Created a directory at {0}'.format(directory))
-    secho(b'Images will be downloaded into {0}'.format(directory))
+        secho(b'Created a directory at {path}'.format(path=directory))
+    secho(b'Images will be downloaded into {path}'.format(path=directory))
 
     user = select_user(state.session, state.client_key, state.client_secret,
                        account)
@@ -290,12 +289,12 @@ def sync(state, account, directory, count, delete, workers):
     if num_favorites is not None:
         eta_min = max(1, int(min(count, num_favorites) / CALL_SIZE))
         eta_max = max(10, int(min(count, num_favorites) / CALL_SIZE * 2))
-        print(plformat('You have {0} favorite {|tweet(s)}.', num_favorites))
+        print(plformat('You have {n} favorite {|tweet(s)}.', n=num_favorites))
         if count != INFINITY:
-            print(plformat('Only the most recent {0} {|tweet(s)} will be '
-                           'examined.', count))
-        print('It may take {0}-{1} minutes to complete.'.format(eta_min,
-                                                                eta_max))
+            print(plformat('Only the most recent {n} {|tweet(s)} will be '
+                           'examined.', n=count))
+        print('It may take {min}-{max} minutes to complete.'.format(
+            min=eta_min, max=eta_max))
 
     max_id = None
     tweet_ids = set()
@@ -315,7 +314,8 @@ def sync(state, account, directory, count, delete, workers):
             limit = data['limit']
             remaining = data['remaining']
             print_api_status = lambda: print(
-                'Remaining API calls: {0}/{1}'.format(remaining, limit))
+                'Remaining API calls: {remaining}/{limit}'.format(
+                    remaining=remaining, limit=limit))
             print_api_status()
             reset = data['reset']
             try:
@@ -336,8 +336,8 @@ def sync(state, account, directory, count, delete, workers):
                             break
                     max_id = tweets[-1].id - 1 if tweets else 0
                     print('There are no more tweets. ' if len(tweets) == 0 else
-                          plformat('{0} {|tweet(s)} {|has/have} been '
-                                   'processed. ', num_saved_tweets), end='')
+                          plformat('{n} {|tweet(s)} {|has/have} been '
+                                   'processed. ', n=num_saved_tweets), end='')
                     print_api_status()
                     last = len(tweets) == 0 or num_saved_tweets >= count
                     if last:
@@ -348,13 +348,14 @@ def sync(state, account, directory, count, delete, workers):
             if last:
                 break
             reset_dt = datetime.fromtimestamp(reset)
-            print(('Rate limit exceeded. '
-                   'Waiting for the next round at {0}.').format(reset_dt))
+            print('Rate limit exceeded. ', end='')
+            print('Waiting for the next round at {time}.'.format(
+                time=reset_dt))
             time.sleep(max(1, reset - time.time() + 10))
 
-        secho(plformat(b'Synchronized {0} {0|image(s)} in {1} {1|tweet(s)} '
-                       b'into {2}', num_saved_images, num_saved_tweets,
-                       directory))
+        secho(plformat(b'Synchronized {n_i} {n_i|image(s)} in {n_t} '
+                       b'{n_t|tweet(s)} into {path}', n_i=num_saved_images,
+                       n_t=num_saved_tweets, path=directory))
     finally:
         # Stop workers
         for _ in range(workers):
@@ -372,9 +373,9 @@ def sync(state, account, directory, count, delete, workers):
                 num_deleted_images += len(tweet.images)
                 delete_tweet(state.session, directory, user, tweet)
             if num_deleted_tweets > 0:
-                print(plformat('Deleted {0} {0|image(s)} in {1} unfavorited '
-                               '{1|tweet(s)}.', num_deleted_images,
-                               num_deleted_tweets))
+                print(plformat('Deleted {n_i} {n_i|image(s)} in {n_t} '
+                               'unfavorited {n_t|tweet(s)}.',
+                               n_i=num_deleted_images, n_t=num_deleted_tweets))
 
 
 @cli.command(short_help='Monitor account activity and download new images.')
@@ -399,8 +400,8 @@ def watch(state, account, directory, delete):
     """
     if not os.path.exists(directory):
         os.makedirs(directory)
-        secho(b'Created a directory at {0}'.format(directory))
-    secho(b'Images will be downloaded into {0}'.format(directory))
+        secho(b'Created a directory at {path}'.format(path=directory))
+    secho(b'Images will be downloaded into {path}'.format(path=directory))
 
     session = state.session
     user = select_user(session, state.client_key, state.client_secret, account)
@@ -429,8 +430,9 @@ def watch(state, account, directory, delete):
                                   file=sys.stderr)
                     num_images = save_tweet(session, directory, user.id, td)
                     color = 'green' if num_images else 'yellow'
-                    secho(plformat('{0} {|image(s)} are saved from a favorited '
-                                   'tweet: ', num_images), fg=color, nl=False)
+                    secho(plformat('{n} {|image(s)} are saved from a '
+                                   'favorited tweet: ', n=num_images),
+                          fg=color, nl=False)
                     secho(td.text.replace(u'\n', u' '))
                 elif msg['event'] == 'unfavorite' and delete:
                     tweet = user.favorites.filter(Tweet.id == td.id).scalar()
@@ -439,8 +441,8 @@ def watch(state, account, directory, delete):
                     num_images = len(tweet.images)
                     delete_tweet(session, directory, user, tweet)
                     color = 'red' if num_images else 'yellow'
-                    secho(plformat('{0} {|image(s)} are deleted from an '
-                                   'unfavorited tweet: ', num_images),
+                    secho(plformat('{n} {|image(s)} are deleted from an '
+                                   'unfavorited tweet: ', n=num_images),
                           fg=color, nl=False)
                     secho(td.text.replace(u'\n', u' '))
     except TwitterError as e:
@@ -453,8 +455,9 @@ def watch(state, account, directory, delete):
         stream.close()
 
 
-def list_users(session):
-    return session.query(User).order_by(User.id).all()
+def print_users(users):
+    for i, u in enumerate(users, 1):
+        secho(u' {i}. {user.name} (@{user.screen_name})'.format(i=i, user=u))
 
 
 def select_user(session, client_key, client_secret, screen_name=None):
@@ -462,16 +465,15 @@ def select_user(session, client_key, client_secret, screen_name=None):
     if user is not None:
         return user
     if screen_name is not None:
-        secho(u'@{0} does not exist.'.format(screen_name), fg='red',
-              file=sys.stderr)
-    users = list_users(session)
+        secho(u'@{screen_name} does not exist.'.format(
+            screen_name=screen_name), fg='red', file=sys.stderr)
+    users = session.query(User).order_by(User.id).all()
     user = None
     if users:
         n = len(users) + 1
         secho('Choose a Twitter account to work with:', fg='blue')
-        for i, u in enumerate(users, 1):
-            secho(u' {0}. {1} (@{2})'.format(i, u.name, u.screen_name))
-        print(' {0}. Add a new account'.format(n))
+        print_users(users)
+        print(' {i}. Add a new account'.format(i=n))
         choice = click.prompt(click.style('Choice: ', fg='blue'),
                               type=click.IntRange(1, n), prompt_suffix='')
         if choice != n:
@@ -503,7 +505,7 @@ def add_user(session, client_key, client_secret):
             user.oauth_token = oauth_token
             user.oauth_token_secret = oauth_token_secret
     debug_timer_end('add_user')
-    secho(u'Added {0} (@{1}).'.format(user.name, user.screen_name))
+    secho(u'Added {user.name} (@{user.screen_name}).'.format(user=user))
     return user
 
 
@@ -598,10 +600,11 @@ def save_tweet(session, directory, user_id, tweet_data):
                 image_data = resp.content
                 error = u''
                 if resp.status_code != 200:
-                    error = u'Got status code {0} from {1}'.format(
-                        resp.status_code, img.url)
+                    error = u'Got status code {code} from {url}'.format(
+                        code=resp.status_code, url=img.url)
                 elif not image_data:
-                    error = u'Got empty response from {0}'.format(img.url)
+                    error = u'Got empty response from {url}'.format(
+                        url=img.url)
                 if error:
                     secho(error, fg='red', file=sys.stderr)
                     continue
@@ -610,8 +613,8 @@ def save_tweet(session, directory, user_id, tweet_data):
                     f.write(image_data)
                 num_images += 1
             except IOError as e:
-                secho(u'Failed to save the image to {0}: {1}'.format(
-                    path, e.strerror), fg='red', file=sys.stderr)
+                secho(u'Failed to save the image to {path}: {error}'.format(
+                    path=path, error=e.strerror), fg='red', file=sys.stderr)
     return num_images
 
 
@@ -622,8 +625,8 @@ def delete_tweet(session, directory, user, tweet):
             try:
                 os.unlink(path)
             except OSError as e:
-                secho(u'Failed to delete the image at {0}: {1}'.format(
-                    path, e.strerror), fg='red', file=sys.stderr)
+                secho(u'Failed to delete the image at {path}: {error}'.format(
+                    path=path, error=e.strerror), fg='red', file=sys.stderr)
     debug_timer_start('delete_tweet')
     with session.begin():
         user.favorites.remove(tweet)
@@ -876,9 +879,9 @@ def main():
             secho(('Your jjaljup database is outdated. '
                    'Unfortunately, migrating data to a new database '
                    'will not be supported until jjaljup reaches version 0.1. '
-                   'You are using version {0}. '
+                   'You are using version {version}. '
                    'Please create a new database.').format(
-                __version__), fg='red', file=sys.stderr)
+                version=__version__), fg='red', file=sys.stderr)
         else:
             # TODO instruct how to migrate
             pass
