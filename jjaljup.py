@@ -171,6 +171,7 @@ def session_option(f):
 
 @click.group()
 @click.option('--debug', is_flag=True, default=False, help='Show debug logs.')
+@click.version_option(__version__, prog_name='jjaljup')
 def cli(debug):
     """
     jjaljup is a downloader for images in your favorite tweets. To use this
