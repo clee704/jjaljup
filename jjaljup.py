@@ -822,6 +822,8 @@ def main():
     except requests_oauthlib.oauth1_session.TokenRequestDenied:
         secho('You entered a wrong PIN. Please try again.', fg='red',
               file=sys.stderr)
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == '__main__':
