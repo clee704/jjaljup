@@ -13,3 +13,4 @@ werkzeug==0.9.6
 pep8
 pylint
 pytest==2.5.2
+tox==1.7.1

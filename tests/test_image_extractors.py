@@ -1,14 +1,17 @@
 from urlparse import urlparse
 
+import pytest
 from jjaljup import get_twitpic, get_twitter_agif, get_yfrog
 
 
+@pytest.mark.webtest
 def test_get_twitter_agif():
     url = 'https://twitter.com/verge/status/479306079202209792/photo/1'
     video_url = 'https://pbs.twimg.com/tweet_video/BqbWVjQIAAEpReg.mp4'
     assert get_twitter_agif(url, urlparse(url)).url == video_url
 
 
+@pytest.mark.webtest
 def test_get_twitpic():
     url = 'http://twitpic.com/dhyrtq'
     image_url = 'http://twitpic.com/show/full/dhyrtq'
@@ -18,6 +21,7 @@ def test_get_twitpic():
     assert img.name == name
 
 
+@pytest.mark.webtest
 def test_get_yfrog():
     url = 'http://yfrog.com/od4hocllj'
     image_url = 'http://a.yfrog.com/img877/9894/4hocll.jpg'

@@ -70,7 +70,7 @@ class User(Base):
     favorites = relationship('Tweet', secondary=favorite_table, lazy='dynamic')
 
     def __repr__(self):
-        return '<User @{0}>'.format(self.screen_name)
+        return '<User @{o.screen_name}>'.format(o=self)
 
 
 class Tweet(Base):
@@ -84,7 +84,7 @@ class Tweet(Base):
                                    lazy='dynamic')
 
     def __repr__(self):
-        return '<Tweet(id={0})>'.format(self.id)
+        return '<Tweet(id={o.id})>'.format(o=self)
 
 
 class Image(Base):
@@ -107,7 +107,7 @@ class Image(Base):
         return os.path.join(directory, bname)
 
     def __repr__(self):
-        return '<Image(url={0!r})>'.format(self.url)
+        return '<Image(url={o.url!r})>'.format(o=self)
 
 
 @event.listens_for(Engine, 'connect')
@@ -217,7 +217,7 @@ def debug(state):
 @client_credentials_option
 @pass_state
 def add(state):
-    """Add a new Twitter account."""
+    """Authorize a new Twitter account."""
     add_user(state.session, state.client_key, state.client_secret)
 
 
