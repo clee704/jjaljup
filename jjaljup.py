@@ -407,6 +407,7 @@ def watch(state, account, directory, delete):
 
     stream = api.GetUserStream()
     try:
+        print('Receiving...')
         for msg in stream:
             if 'event' in msg and 'target_object' in msg:
                 if msg['source']['id'] != user.id:
