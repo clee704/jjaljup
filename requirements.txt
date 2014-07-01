@@ -10,7 +10,4 @@ requests-oauthlib==0.4.1
 werkzeug==0.9.6
 
 # For development
-pep8
-pylint
 pytest==2.5.2
-tox==1.7.1

@@ -47,6 +47,8 @@ AUTHORIZATION_URL = 'https://api.twitter.com/oauth/authorize'
 ACCESS_TOKEN_URL = 'https://api.twitter.com/oauth/access_token'
 RATE_LIMIT_EXCEEDED = 88
 
+DEFAULT_DATABASE_URI = 'sqlite:///jjaljup.db'
+
 Base = declarative_base()
 Session = sessionmaker()
 
@@ -164,7 +166,7 @@ def session_option(f):
         return state
     return click.option('--database-uri', metavar='URI',
                         envvar='JJALJUP_DATABASE_URI',
-                        default='sqlite:///jjaljup.db', expose_value=False,
+                        default=DEFAULT_DATABASE_URI, expose_value=False,
                         callback=callback,
                         help='Specify a database that contains information '
                              'about authorized Twitter accounts and favorite '
