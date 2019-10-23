@@ -7,7 +7,7 @@ python-oauth2==0.7.0
 python-twitter==1.3.1
 requests==2.3.0
 requests-oauthlib==0.4.1
-werkzeug==0.9.6
+werkzeug==0.15.3
 
 # For development
 pytest==2.5.2

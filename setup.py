@@ -32,7 +32,7 @@ setup(
         'python-twitter==1.3.1',
         'requests==2.3.0',
         'requests-oauthlib==0.4.1',
-        'werkzeug==0.9.6',
+        'werkzeug==0.15.3',
     ],
     entry_points={
         'console_scripts': [
